@@ -518,8 +518,10 @@ jobs:
             return;
           }
 
-          // Enforce schema constraints before upload
-          review.event = 'COMMENT';
+          // Normalise before upload. Preserve the model's event if it is a
+          // recognised value — the post job enforces the review_event policy.
+          const validEvents = ['COMMENT', 'REQUEST_CHANGES', 'APPROVE'];
+          if (!validEvents.includes(review.event)) review.event = 'COMMENT';
           if (!Array.isArray(review.comments)) review.comments = [];
           if (review.comments.length > 100)    review.comments = review.comments.slice(0, 100);
 
@@ -935,12 +937,21 @@ jobs:
         OUTPUTFMT
         } > gemini-prompt.md
 
+    - name: Load Gemini prompt into step output
+      id: gemini_prompt
+      run: |
+        {
+          echo 'content<<__EOF_GEMINI_PROMPT__'
+          cat gemini-prompt.md
+          echo '__EOF_GEMINI_PROMPT__'
+        } >> "$GITHUB_OUTPUT"
+
     - name: Run Gemini CLI
       id: gemini
       uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
       with:
         gemini_api_key: ${{ secrets.gemini_api_key }}
-        prompt_file:    gemini-prompt.md
+        prompt:         ${{ steps.gemini_prompt.outputs.content }}
         # Restrict Gemini CLI to read-only tools via settings JSON.
         # coreTools limits the built-in tool set; the exact names depend on the
         # Gemini CLI version — verify against the CLI docs when updating.
@@ -1039,7 +1050,8 @@ jobs:
             return;
           }
 
-          review.event = 'COMMENT';
+          const validEvents = ['COMMENT', 'REQUEST_CHANGES', 'APPROVE'];
+          if (!validEvents.includes(review.event)) review.event = 'COMMENT';
           if (!Array.isArray(review.comments)) review.comments = [];
           if (review.comments.length > 100)    review.comments = review.comments.slice(0, 100);
 
