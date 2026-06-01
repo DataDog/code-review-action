@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "codex-output.json",
+  "title": "Codex review output",
+  "description": "Output schema for openai/codex-action. priority 0=blocker, 1=major, 2=minor, 3=nit. confidence_score is 0-1. The post job maps this to the GitHub review shape.",
+  "type": "object",
+  "required": ["findings", "overall_correctness", "overall_explanation", "overall_confidence_score"],
+  "additionalProperties": false,
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "body", "confidence_score", "priority", "code_location"],
+        "additionalProperties": false,
+        "properties": {
+          "title":            { "type": "string", "maxLength": 80 },
+          "body":             { "type": "string", "minLength": 1 },
+          "confidence_score": { "type": "number", "minimum": 0, "maximum": 1 },
+          "priority":         { "type": "integer", "minimum": 0, "maximum": 3 },
+          "code_location": {
+            "type": "object",
+            "required": ["absolute_file_path", "line_range"],
+            "additionalProperties": false,
+            "properties": {
+              "absolute_file_path": { "type": "string", "minLength": 1 },
+              "line_range": {
+                "type": "object",
+                "required": ["start", "end"],
+                "additionalProperties": false,
+                "properties": {
+                  "start": { "type": "integer", "minimum": 1 },
+                  "end":   { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "overall_correctness": {
+      "type": "string",
+      "enum": ["patch is correct", "patch is incorrect"]
+    },
+    "overall_explanation":      { "type": "string", "minLength": 1 },
+    "overall_confidence_score": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}

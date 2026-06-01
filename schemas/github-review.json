@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "github-review.json",
+  "title": "AI review payload",
+  "description": "Shape for GitHub's POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews. `commit_id` is omitted — the post job injects it. `event` is locked to COMMENT to prevent the AI from approving or requesting changes. `comments` is capped at 100. `side` and `start_side` are constrained to LEFT/RIGHT so typos fail at schema validation rather than at the GitHub API.",
+  "type": "object",
+  "required": ["body", "event", "comments"],
+  "additionalProperties": false,
+  "properties": {
+    "body": { "type": "string" },
+    "event": { "type": "string", "enum": ["COMMENT"] },
+    "comments": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["path", "body"],
+        "anyOf": [
+          { "required": ["line"] },
+          { "required": ["position"] }
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "path":       { "type": "string" },
+          "body":       { "type": "string" },
+          "position":   { "type": "integer" },
+          "line":       { "type": "integer" },
+          "side":       { "type": "string", "enum": ["LEFT", "RIGHT"] },
+          "start_line": { "type": "integer" },
+          "start_side": { "type": "string", "enum": ["LEFT", "RIGHT"] }
+        }
+      }
+    }
+  }
+}
