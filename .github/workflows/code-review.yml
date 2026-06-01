@@ -67,9 +67,10 @@
 #     review:
 #       uses: DataDog/code-review-action/.github/workflows/code-review.yml@main
 #       with:
-#         provider: claude          # claude | codex | gemini
-#         trigger_mode: on_demand   # always | on_demand
-#         prompt_file: .claude/review-prompt.md   # optional
+#         provider:      claude        # claude | codex | gemini
+#         trigger_mode:  on_demand     # always | on_demand
+#         prompt_file:   .claude/review-prompt.md   # optional
+#         review_event:  COMMENT_ONLY  # COMMENT_ONLY (default) | ALL
 #       secrets:
 #         anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 #         # openai_api_key:   ${{ secrets.OPENAI_API_KEY }}   # for codex
@@ -97,6 +98,17 @@ on:
           prompt if the file is absent or the input is empty.
         type: string
         default: ''
+      review_event:
+        description: |
+          Controls which GitHub review event types the bot may post.
+          "COMMENT_ONLY" (default) — the bot always posts a COMMENT, never
+          REQUEST_CHANGES or APPROVE. Safe default: the bot cannot block merges
+          or satisfy branch-protection approval rules.
+          "ALL" — the bot may post COMMENT, REQUEST_CHANGES, or APPROVE based on
+          its analysis. Only enable this if you trust the AI model as a reviewer
+          that can influence merge eligibility.
+        type: string
+        default: 'COMMENT_ONLY'
     secrets:
       anthropic_api_key:
         required: false
@@ -343,7 +355,7 @@ jobs:
           ```
           {
             "body":     string,     // overall review verdict (markdown)
-            "event":    "COMMENT",  // fixed — never approve or request-changes
+            "event":    string,     // see constraint below
             "comments": [
               {
                 "path":  string,    // repo-relative path (drop __untrusted/ prefix)
@@ -356,7 +368,7 @@ jobs:
           ```
 
           Hard constraints:
-          - `event` must be `"COMMENT"` exactly.
+          ${{ inputs.review_event == 'ALL' && '- `event` must be "COMMENT", "REQUEST_CHANGES", or "APPROVE". Use "REQUEST_CHANGES" when there are blocking findings. Use "APPROVE" only when the patch is clearly correct with no concerns.' || '- `event` must be "COMMENT" exactly — do not approve or request-changes.' }}
           - Only comment on lines present in `./__untrusted_diff/diff.patch`.
           - Paths must omit the `__untrusted/` prefix.
           - `comments` must have ≤ 100 entries.
@@ -395,7 +407,8 @@ jobs:
 
           // Canary patterns: detect prompt-injection artifacts in model output.
           const CANARY_PATTERNS = [
-            /(?:curl|wget|nc|bash|sh\s+-c|eval|exec)\s+/i,
+            /(?:curl|wget|nc|bash|sh\s+-c|eval)\s+/i,
+            /\bexec\s+["'\/\-]/i,
             />>?\s*\$GITHUB_OUTPUT/,
             />>?\s*\$GITHUB_ENV/,
           ];
@@ -467,9 +480,25 @@ jobs:
           }
 
           if (!review) {
-            // Last-resort: regex the whole log for a JSON object with review shape
-            const m = log.match(/\{"body"\s*:[\s\S]*?"event"\s*:\s*"COMMENT"[\s\S]*?\}/);
-            if (m) { try { review = JSON.parse(m[0]); } catch {} }
+            // Last-resort: scan for every top-level `{` in the log and try to
+            // parse a balanced JSON object from that position. A regex cannot
+            // reliably match nested `}`, so we walk brace depth manually.
+            for (let pos = 0; pos < log.length; pos++) {
+              if (log[pos] !== '{') continue;
+              let depth = 0;
+              let end = -1;
+              for (let j = pos; j < log.length; j++) {
+                if (log[j] === '{') depth++;
+                else if (log[j] === '}') { depth--; if (depth === 0) { end = j; break; } }
+              }
+              if (end === -1) continue;
+              try {
+                const obj = JSON.parse(log.slice(pos, end + 1));
+                if (obj.body !== undefined && obj.event !== undefined && Array.isArray(obj.comments)) {
+                  review = obj; break;
+                }
+              } catch {}
+            }
           }
 
           if (!review) {
@@ -607,11 +636,6 @@ jobs:
         "patch is incorrect"; provide a concise `overall_explanation`.
         FOOTER
 
-    - name: Record head SHA
-      env:
-        HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
-      run: printf '%s' "$HEAD_SHA" > head-sha.txt
-
     - name: Write Codex output schema
       run: |
         cat > codex-output-schema.json << 'SCHEMA'
@@ -675,8 +699,6 @@ jobs:
 
     - name: Normalize Codex output to GitHub review format + scan secrets
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-      env:
-        HEAD_SHA_FILE: head-sha.txt
       with:
         script: |
           const fs = require('node:fs');
@@ -695,7 +717,8 @@ jobs:
             /BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY/,
           ];
           const CANARY_PATTERNS = [
-            /(?:curl|wget|nc|bash|sh\s+-c|eval|exec)\s+/i,
+            /(?:curl|wget|nc|bash|sh\s+-c|eval)\s+/i,
+            /\bexec\s+["'\/\-]/i,
             />>?\s*\$GITHUB_OUTPUT/,
             />>?\s*\$GITHUB_ENV/,
           ];
@@ -771,9 +794,7 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ai-review
-        path: |
-          _review/review.json
-          head-sha.txt
+        path: _review/review.json
         if-no-files-found: error
         retention-days: 1
 
@@ -843,9 +864,10 @@ jobs:
 
     - name: Build prompt file for Gemini
       env:
-        PROMPT_FILE: ${{ steps.prompt.outputs.prompt_path }}
-        PR_NUMBER:   ${{ needs.gate.outputs.pr_number }}
-        REPO:        ${{ github.repository }}
+        PROMPT_FILE:  ${{ steps.prompt.outputs.prompt_path }}
+        PR_NUMBER:    ${{ needs.gate.outputs.pr_number }}
+        REPO:         ${{ github.repository }}
+        REVIEW_EVENT: ${{ inputs.review_event }}
       run: |
         {
           echo "# Code Review"
@@ -887,7 +909,7 @@ jobs:
 
         {
           "body":     string,     // overall verdict (markdown)
-          "event":    "COMMENT",  // always "COMMENT"
+          "event":    string,     // see constraint below
           "comments": [
             {
               "path":  string,    // repo-relative path (drop __untrusted/ prefix)
@@ -899,7 +921,13 @@ jobs:
         }
 
         Hard constraints:
-        - event must be "COMMENT" exactly.
+        OUTPUTFMT
+          if [ "$REVIEW_EVENT" = "ALL" ]; then
+            echo '        - event must be "COMMENT", "REQUEST_CHANGES", or "APPROVE". Use "REQUEST_CHANGES" for blocking findings. Use "APPROVE" only when the patch is clearly correct.'
+          else
+            echo '        - event must be "COMMENT" exactly — do not approve or request-changes.'
+          fi
+          cat << 'OUTPUTFMT'
         - Only comment on lines in ./__untrusted_diff/diff.patch.
         - Paths must omit the __untrusted/ prefix.
         - comments must have <= 100 entries.
@@ -948,7 +976,8 @@ jobs:
             /BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY/,
           ];
           const CANARY_PATTERNS = [
-            /(?:curl|wget|nc|bash|sh\s+-c|eval|exec)\s+/i,
+            /(?:curl|wget|nc|bash|sh\s+-c|eval)\s+/i,
+            /\bexec\s+["'\/\-]/i,
             />>?\s*\$GITHUB_OUTPUT/,
             />>?\s*\$GITHUB_ENV/,
           ];
@@ -1072,7 +1101,8 @@ jobs:
             /BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY/,
           ];
           const CANARY_PATTERNS = [
-            /(?:curl|wget|nc|bash|sh\s+-c|eval|exec)\s+/i,
+            /(?:curl|wget|nc|bash|sh\s+-c|eval)\s+/i,
+            /\bexec\s+["'\/\-]/i,
             />>?\s*\$GITHUB_OUTPUT/,
             />>?\s*\$GITHUB_ENV/,
           ];
@@ -1112,17 +1142,19 @@ jobs:
     - name: Post review to pull request
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
       env:
-        PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
-        HEAD_SHA:  ${{ needs.gate.outputs.head_sha }}
-        PROVIDER:  ${{ inputs.provider }}
+        PR_NUMBER:    ${{ needs.gate.outputs.pr_number }}
+        HEAD_SHA:     ${{ needs.gate.outputs.head_sha }}
+        PROVIDER:     ${{ inputs.provider }}
+        REVIEW_EVENT: ${{ inputs.review_event }}
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           const fs = require('node:fs');
 
-          const pull_number = Number(process.env.PR_NUMBER);
-          const commit_id   = process.env.HEAD_SHA;
-          const provider    = process.env.PROVIDER;
+          const pull_number   = Number(process.env.PR_NUMBER);
+          const commit_id     = process.env.HEAD_SHA;
+          const provider      = process.env.PROVIDER;
+          const reviewEventPolicy = process.env.REVIEW_EVENT; // 'COMMENT_ONLY' | 'ALL'
 
           const review = JSON.parse(fs.readFileSync('review.json', 'utf8'));
 
@@ -1132,9 +1164,11 @@ jobs:
           const body   = [header, '', review.body || ''].join('\n');
 
           const comments = Array.isArray(review.comments) ? review.comments : [];
-          const event    = ['COMMENT', 'REQUEST_CHANGES', 'APPROVE'].includes(review.event)
-                           ? review.event
-                           : 'COMMENT';
+          // Enforce review_event policy. COMMENT_ONLY (default) prevents the bot from
+          // blocking merges or satisfying branch-protection approval rules.
+          const allowedEvents = ['COMMENT', 'REQUEST_CHANGES', 'APPROVE'];
+          const modelEvent = allowedEvents.includes(review.event) ? review.event : 'COMMENT';
+          const event = reviewEventPolicy === 'ALL' ? modelEvent : 'COMMENT';
 
           try {
             await github.rest.pulls.createReview({
