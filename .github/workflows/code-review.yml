@@ -313,8 +313,8 @@ jobs:
 
           trusted_path="__trusted/$pf"
           if [ ! -f "$trusted_path" ]; then
-            echo "Warning: '$pf' not found on default branch - skipping"
-            continue
+            echo "::error::prompt_file entry '$pf' was not found on the default branch. Correct the path or remove the entry."
+            exit 1
           fi
 
           # Determine scope: root-level files always apply; subdirectory files
@@ -603,7 +603,25 @@ jobs:
           write(review);
           core.info(`Review ready: ${review.comments.length} inline comment(s)`);
 
+    - name: Write failure notice if review missing
+      if: always()
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      with:
+        script: |
+          const fs = require('node:fs');
+          if (!fs.existsSync('_review/review.json')) {
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            fs.mkdirSync('_review', { recursive: true });
+            fs.writeFileSync('_review/review.json', JSON.stringify({
+              body:     `> [!WARNING]\n> **AI review failed to produce output.** The provider job failed before writing a result.\n>\n> See [workflow run](${runUrl}) for details.`,
+              event:    'COMMENT',
+              comments: [],
+            }));
+            core.warning('No review.json found - writing failure notice so post can report the error');
+          }
+
     - name: Upload review artifact
+      if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ai-review
@@ -819,7 +837,25 @@ jobs:
           write({ body, event, comments });
           core.info(`Codex review mapped: ${comments.length} comment(s), event=${event}`);
 
+    - name: Write failure notice if review missing
+      if: always()
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      with:
+        script: |
+          const fs = require('node:fs');
+          if (!fs.existsSync('_review/review.json')) {
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            fs.mkdirSync('_review', { recursive: true });
+            fs.writeFileSync('_review/review.json', JSON.stringify({
+              body:     `> [!WARNING]\n> **AI review failed to produce output.** The provider job failed before writing a result.\n>\n> See [workflow run](${runUrl}) for details.`,
+              event:    'COMMENT',
+              comments: [],
+            }));
+            core.warning('No review.json found - writing failure notice so post can report the error');
+          }
+
     - name: Upload review artifact
+      if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ai-review
@@ -1031,7 +1067,25 @@ jobs:
           write(review);
           core.info(`Gemini review ready: ${review.comments.length} comment(s)`);
 
+    - name: Write failure notice if review missing
+      if: always()
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      with:
+        script: |
+          const fs = require('node:fs');
+          if (!fs.existsSync('_review/review.json')) {
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            fs.mkdirSync('_review', { recursive: true });
+            fs.writeFileSync('_review/review.json', JSON.stringify({
+              body:     `> [!WARNING]\n> **AI review failed to produce output.** The provider job failed before writing a result.\n>\n> See [workflow run](${runUrl}) for details.`,
+              event:    'COMMENT',
+              comments: [],
+            }));
+            core.warning('No review.json found - writing failure notice so post can report the error');
+          }
+
     - name: Upload review artifact
+      if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ai-review
@@ -1051,9 +1105,9 @@ jobs:
     needs: [gate, prepare, review_claude, review_codex, review_gemini]
     if: >-
       always() && needs.gate.outputs.proceed == 'true' && (
-        needs.review_claude.result == 'success' ||
-        needs.review_codex.result  == 'success' ||
-        needs.review_gemini.result == 'success'
+        contains(fromJSON('["success","failure"]'), needs.review_claude.result) ||
+        contains(fromJSON('["success","failure"]'), needs.review_codex.result)  ||
+        contains(fromJSON('["success","failure"]'), needs.review_gemini.result)
       )
     runs-on: ubuntu-latest
     permissions:
