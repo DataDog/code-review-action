@@ -624,24 +624,31 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+    - name: Checkout PR head
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        ref: ${{ needs.gate.outputs.head_sha }}
+        persist-credentials: false
+        fetch-depth: 1
+
+    - name: Strip AI instruction files
+      # Remove files that could override Codex's system prompt or tool behaviour.
+      # See DataDog internal AI Actions security guidance for the canonical list.
+      run: |
+        find . -maxdepth 5 \( \
+          -name "AGENTS.md" -o \
+          -name "CLAUDE.md" -o \
+          -name ".cursorrules" \
+        \) -not -path "./_prepare/*" -delete 2>/dev/null || true
+        rm -rf .cursor/rules
+
     - name: Download prepare artifacts
+      # Downloaded AFTER checkout so the PR tree cannot plant a malicious
+      # _prepare/ directory that would be read as trusted guidelines.
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
         name: ai-review-prepare
         path: _prepare
-
-    - name: Checkout PR merge ref
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      with:
-        ref: refs/pull/${{ needs.gate.outputs.pr_number }}/merge
-        persist-credentials: false
-        fetch-depth: 0
-
-    - name: Pre-fetch base and head refs
-      env:
-        HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
-        BASE_SHA: ${{ needs.gate.outputs.base_sha }}
-      run: git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
 
     - name: Build Codex prompt
       run: |
