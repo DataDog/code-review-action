@@ -276,6 +276,12 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+    - name: Checkout calling repo (for local diff generation)
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
     - name: Checkout prompt files from default branch (sparse)
       if: inputs.prompt_file != ''
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -287,17 +293,15 @@ jobs:
         sparse-checkout: ${{ inputs.prompt_file }}
         sparse-checkout-cone-mode: false
 
-    - name: Fetch PR diff
+    - name: Generate PR diff and changed file list via local git
       env:
-        GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
-        BASE_SHA:  ${{ needs.gate.outputs.base_sha }}
-        HEAD_SHA:  ${{ needs.gate.outputs.head_sha }}
+        BASE_SHA: ${{ needs.gate.outputs.base_sha }}
+        HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
       run: |
         mkdir -p _prepare
-        gh api -H "Accept: application/vnd.github.diff" \
-          "repos/$GITHUB_REPOSITORY/compare/${BASE_SHA}...${HEAD_SHA}" \
-          > _prepare/diff.patch
-        echo "Diff: $(wc -l < _prepare/diff.patch) lines"
+        git diff "${BASE_SHA}...${HEAD_SHA}"           > _prepare/diff.patch
+        git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > _prepare/changed_files.txt
+        echo "Diff: $(wc -l < _prepare/diff.patch) lines, $(wc -l < _prepare/changed_files.txt) changed file(s)"
 
     - name: Write shared scripts
       # Writes scan.js once; review_* and post jobs load it from the artifact.
@@ -356,7 +360,6 @@ jobs:
     - name: Aggregate guidelines
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
       env:
-        PR_NUMBER:    ${{ needs.gate.outputs.pr_number }}
         PROMPT_FILES: ${{ inputs.prompt_file }}
         REVIEW_EVENT: ${{ inputs.review_event }}
       with:
@@ -366,28 +369,13 @@ jobs:
 
           const promptFiles = process.env.PROMPT_FILES || '';
           const reviewEvent = process.env.REVIEW_EVENT;
-          const prNumber    = Number(process.env.PR_NUMBER);
 
           fs.mkdirSync('_prepare', { recursive: true });
 
-          // Fetch changed files (needed for directory scoping) only when
-          // prompt_file is non-empty.
-          const changedFiles = [];
-          if (promptFiles.trim()) {
-            let page = 1;
-            while (true) {
-              const { data } = await github.rest.pulls.listFiles({
-                owner:       context.repo.owner,
-                repo:        context.repo.repo,
-                pull_number: prNumber,
-                per_page:    100,
-                page,
-              });
-              if (!data.length) break;
-              changedFiles.push(...data.map(f => f.filename));
-              page++;
-            }
-          }
+          // Read changed files from local git output (faster; no API pagination).
+          const changedFiles = promptFiles.trim()
+            ? fs.readFileSync('_prepare/changed_files.txt', 'utf8').split('\n').filter(Boolean)
+            : [];
 
           // Output-format block appended to every guidelines.md so all
           // providers receive a consistent instruction.
