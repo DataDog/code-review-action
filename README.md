@@ -15,7 +15,7 @@ A reusable GitHub Actions workflow that runs an AI model as a read-only code rev
 | `trigger_mode` | When it runs | Auth check |
 |---|---|---|
 | `always` (default) | Every PR event (`opened`, `reopened`, `synchronize`, `ready_for_review`). Fork PRs are skipped automatically. | None — only same-repo PRs are processed. |
-| `on_demand` | When a collaborator with **write access** comments `/review` on a PR. | Commenter must have `write`, `maintain`, or `admin` permission. |
+| `on_demand` | When a collaborator with **write access** comments `/dd-review` on a PR. | Commenter must have `write`, `maintain`, or `admin` permission. |
 
 You can enable both modes at once by wiring up both event triggers in the calling workflow.
 

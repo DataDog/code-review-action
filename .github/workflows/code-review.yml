@@ -90,7 +90,7 @@ on:
       trigger_mode:
         description: |
           "always" - runs on every qualifying pull_request event.
-          "on_demand" - runs only when a write-access collaborator comments /review.
+          "on_demand" - runs only when a write-access collaborator comments /dd-review.
         type: string
         default: 'always'
       prompt_file:
@@ -152,6 +152,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      checks: write
     outputs:
       proceed:   ${{ steps.gate.outputs.proceed }}
       pr_number: ${{ steps.gate.outputs.pr_number }}
@@ -184,8 +185,8 @@ jobs:
           [ "$HAS_PR_CTX" = "true" ] \
             || { echo "Skipping: comment is not on a pull request"; exit 0; }
           case "$COMMENT_BODY" in
-            /review*) ;;
-            *) echo "Skipping: comment body does not start with /review"; exit 0 ;;
+            /dd-review*) ;;
+            *) echo "Skipping: comment body does not start with /dd-review"; exit 0 ;;
           esac
 
           # Validate and authorize commenter.
@@ -230,6 +231,36 @@ jobs:
           echo "head_sha=$head_sha"
           echo "base_sha=$base_sha"
         } >> "$GITHUB_OUTPUT"
+
+    - name: React to trigger comment
+      # Acknowledge the /dd-review command with a 👀 so the requester
+      # knows the run is in progress. Failure is non-fatal.
+      if: inputs.trigger_mode == 'on_demand' && steps.gate.outputs.proceed == 'true'
+      env:
+        GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}
+        REPO:       ${{ github.repository }}
+        COMMENT_ID: ${{ github.event.comment.id }}
+      run: |
+        gh api "repos/$REPO/issues/comments/$COMMENT_ID/reactions" \
+          --method POST -f content=eyes --silent || true
+
+    - name: Create in-progress check-run
+      # Creates a check-run entry so reviewers can follow the link from
+      # the PR status area directly to this workflow run.
+      if: steps.gate.outputs.proceed == 'true'
+      env:
+        GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+        REPO:      ${{ github.repository }}
+        HEAD_SHA:  ${{ steps.gate.outputs.head_sha }}
+        PROVIDER:  ${{ inputs.provider }}
+      run: |
+        gh api "repos/$REPO/check-runs" \
+          --method POST \
+          --field "name=AI Code Review ($PROVIDER)" \
+          --field "head_sha=$HEAD_SHA" \
+          --field "status=in_progress" \
+          --field "details_url=$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID" \
+          --silent || true
 
 
   # -- PREPARE ---------------------------------------------------------------
