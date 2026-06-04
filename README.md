@@ -59,13 +59,22 @@ Add the API key for your chosen provider as a repository secret:
 |---|---|---|---|
 | `provider` | string | `claude` | AI provider: `claude`, `codex`, or `gemini`. |
 | `trigger_mode` | string | `always` | `always` runs on PR events; `on_demand` requires a `/review` comment from a write-access collaborator. |
-| `prompt_file` | string | `""` | Repo-relative path to a Markdown review guide (read from the default branch). Falls back to a built-in generic prompt if absent. |
+| `prompt_file` | string | `""` | Newline-separated list of Markdown review guide paths (read from the default branch). Root-level files apply to all PRs; subdirectory files apply only when changed files share that prefix. Falls back to a built-in prompt when empty or no file matches. |
 
 ## Custom review guide
 
-Place a Markdown file in your repo (e.g. `.claude/review-prompt.md`) and pass its path via `prompt_file`. The file is read from the **default branch**, not the PR head, so a PR cannot rewrite its own review instructions.
+Pass a newline-separated list of paths via `prompt_file`. Files are read from the **default branch** only — a PR cannot rewrite its own review instructions.
 
-Example:
+**Scoping rule:** a file at the repo root applies to every PR; a file under a subdirectory (e.g. `bazel/guide.md`) applies only when at least one changed file lives under that directory.
+
+```yaml
+prompt_file: |
+  guide.md          # applies to every PR
+  bazel/guide.md    # applies only when bazel/ files changed
+  pkg/auth/guide.md # applies only when pkg/auth/ files changed
+```
+
+Each file is plain Markdown. Example content:
 
 ```markdown
 # Review guide
@@ -77,7 +86,7 @@ Review as a senior Go engineer.
 - Only comment on lines present in the diff.
 ```
 
-For Codex, you can also place `codereview_guideline.md` files in subdirectories. The workflow aggregates all guidelines found in ancestor directories of changed files.
+The workflow appends a standardized output-format section automatically, so you do not need to describe the JSON shape in your guide files.
 
 ## Security model
 
@@ -133,4 +142,4 @@ AI output is checked for shell commands (`curl`, `wget`, `bash`, etc.) and attem
 
 - Fork PRs are not reviewed in `always` mode (provider API keys would be exposed to untrusted code). Use `on_demand` if you want to review fork PRs selectively.
 - The `gemini` provider uses `--yolo` (auto-approve all tool calls) as required by the upstream action. Tool restriction is enforced via the `settings` input; verify the `coreTools` names against your Gemini CLI version.
-- The `codex` provider can post `REQUEST_CHANGES` when findings are blocking (P0/P1) or the overall verdict is `patch is incorrect`. Claude and Gemini always post `COMMENT`.
+- All three providers use the same output format (`github-review.json` shape). The `review_event` policy controls whether `REQUEST_CHANGES` and `APPROVE` are passed through or downgraded to `COMMENT`.
