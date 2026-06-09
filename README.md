@@ -104,7 +104,7 @@ gate  ──►  review_{provider}  ──►  post
 
 ### Trust boundaries
 
-- The PR head is checked out into `__untrusted/`. The AI is instructed to treat all content there as hostile data.
+- The PR head is checked out into `__untrusted/` (full repo at PR state, for reference during review). The AI is instructed to treat all content there as untrusted user input.
 - Trusted files (review guide, scripts) come from the **default branch** via sparse checkout. The PR cannot modify them.
 - `.claude/settings.json` is **not** checked out to prevent plugin/MCP server loading that would expand the tool surface.
 
