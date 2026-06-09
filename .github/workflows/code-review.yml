@@ -154,10 +154,11 @@ jobs:
       pull-requests: read
       checks: write
     outputs:
-      proceed:   ${{ steps.gate.outputs.proceed }}
-      pr_number: ${{ steps.gate.outputs.pr_number }}
-      head_sha:  ${{ steps.gate.outputs.head_sha }}
-      base_sha:  ${{ steps.gate.outputs.base_sha }}
+      proceed:      ${{ steps.gate.outputs.proceed }}
+      pr_number:    ${{ steps.gate.outputs.pr_number }}
+      head_sha:     ${{ steps.gate.outputs.head_sha }}
+      base_sha:     ${{ steps.gate.outputs.base_sha }}
+      check_run_id: ${{ steps.gate.outputs.check_run_id }}
     steps:
     - name: Verify trigger, authorize, and resolve SHAs
       id: gate
@@ -245,15 +246,19 @@ jobs:
           }
 
           // Create an in-progress check-run so the PR status area links to this run.
+          // Output the ID so the post job can mark it completed.
+          let checkRunId = 0;
           try {
-            await github.rest.checks.create({
+            const { data: cr } = await github.rest.checks.create({
               owner: context.repo.owner, repo: context.repo.repo,
               name:        `AI Code Review (${provider})`,
               head_sha:    headSha,
               status:      'in_progress',
               details_url: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
             });
+            checkRunId = cr.id;
           } catch (e) { core.warning(`Could not create check-run: ${e.message}`); }
+          core.setOutput('check_run_id', String(checkRunId));
 
 
   # -- PREPARE ---------------------------------------------------------------
@@ -977,6 +982,7 @@ jobs:
     permissions:
       contents:      read
       pull-requests: write
+      checks:        write
     steps:
     - name: Download review artifact
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1033,6 +1039,9 @@ jobs:
           }
 
           core.setOutput('event', review.event || 'COMMENT');
+          // 'ok' = real review posted; 'suppressed' = failure notice (AI error or scan blocked).
+          const suppressed = (review.body || '').startsWith('> [!WARNING]');
+          core.setOutput('status', suppressed ? 'suppressed' : 'ok');
 
     - name: Post review to pull request
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -1090,4 +1099,48 @@ jobs:
               body:         fallback.join('\n'),
             });
             core.info('Fallback issue comment posted');
+          }
+
+    - name: Signal review completion
+      if: always()
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      env:
+        CHECK_RUN_ID: ${{ needs.gate.outputs.check_run_id }}
+        TRIGGER_MODE: ${{ inputs.trigger_mode }}
+        SCAN_STATUS:  ${{ steps.scan.outputs.status }}
+      with:
+        script: |
+          const checkRunId  = Number(process.env.CHECK_RUN_ID);
+          const triggerMode = process.env.TRIGGER_MODE;
+          // 'ok' = real review; 'suppressed' = AI error or scan blocked; '' = scan step skipped.
+          const scanStatus  = process.env.SCAN_STATUS || 'suppressed';
+          const conclusion  = scanStatus === 'ok' ? 'success' : 'failure';
+
+          // Mark the check-run completed so it no longer shows as in_progress.
+          if (checkRunId) {
+            try {
+              await github.rest.checks.update({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                check_run_id: checkRunId,
+                status:       'completed',
+                conclusion,
+                completed_at: new Date().toISOString(),
+              });
+              core.info(`Check-run ${checkRunId} marked ${conclusion}`);
+            } catch (e) { core.warning(`Could not update check-run: ${e.message}`); }
+          }
+
+          // Add a completion reaction to the /dd-review comment so the requester
+          // gets a visible end signal without opening the workflow run.
+          // rocket (🚀) = review posted; confused (😕) = error or scan suppressed.
+          if (triggerMode === 'on_demand' && context.payload.comment?.id) {
+            try {
+              await github.rest.reactions.createForIssueComment({
+                owner:      context.repo.owner,
+                repo:       context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content:    conclusion === 'success' ? 'rocket' : 'confused',
+              });
+            } catch (e) { core.warning(`Could not post completion reaction: ${e.message}`); }
           }
