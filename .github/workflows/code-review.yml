@@ -3,12 +3,13 @@
 #
 # -- Security model - read before editing -------------------------------------
 #
-# The pipeline has four stages: gate -> prepare -> review_{provider} -> post.
+# The pipeline has five stages: gate -> start_signal / prepare -> review_{provider} -> post.
 # Treat the checked-out PR tree and all PR/comment metadata as hostile input
 # subject to prompt injection.
 #
 # Job permissions (principle of least privilege):
 #   gate:            contents: read  pull-requests: read
+#   start_signal:                    pull-requests: write
 #   prepare:         contents: read  pull-requests: read
 #   review_*:        contents: read  pull-requests: read   (no write)
 #   post:            contents: read  pull-requests: write
@@ -235,16 +236,6 @@ jobs:
           core.setOutput('head_sha',  headSha);
           core.setOutput('base_sha',  baseSha);
 
-          // Acknowledge /dd-review with a reaction so the requester knows the run started.
-          if (triggerMode === 'on_demand') {
-            try {
-              await github.rest.reactions.createForIssueComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                comment_id: context.payload.comment.id, content: 'eyes',
-              });
-            } catch (e) { core.warning(`Could not post reaction: ${e.message}`); }
-          }
-
           // Create an in-progress check-run so the PR status area links to this run.
           // Output the ID so the post job can mark it completed.
           let checkRunId = 0;
@@ -259,6 +250,48 @@ jobs:
             checkRunId = cr.id;
           } catch (e) { core.warning(`Could not create check-run: ${e.message}`); }
           core.setOutput('check_run_id', String(checkRunId));
+
+
+  # -- START SIGNAL ----------------------------------------------------------
+  # Posts the 👀 reaction on the /dd-review comment to acknowledge the
+  # request. Lives in its own job so gate can stay read-only; pull-requests:write
+  # is scoped here and never reaches the review_* jobs.
+  start_signal:
+    name: Acknowledge request
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true' && inputs.trigger_mode == 'on_demand'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+    - name: Add eyes reaction
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          const commentId = context.payload.comment.id;
+
+          // Remove any stale bot reactions left over from a previous run on this comment.
+          try {
+            const { data: reactions } = await github.rest.reactions.listForIssueComment({
+              owner, repo, comment_id: commentId, per_page: 100,
+            });
+            for (const r of reactions || []) {
+              if (!['eyes', 'rocket', 'confused'].includes(r.content)) continue;
+              if (r.user?.login !== 'github-actions[bot]') continue;
+              try {
+                await github.rest.reactions.deleteForIssueComment({
+                  owner, repo, comment_id: commentId, reaction_id: r.id,
+                });
+              } catch (e) { core.warning(`Could not remove stale reaction: ${e.message}`); }
+            }
+          } catch (e) { core.warning(`Could not list existing reactions: ${e.message}`); }
+
+          try {
+            await github.rest.reactions.createForIssueComment({
+              owner, repo, comment_id: commentId, content: 'eyes',
+            });
+          } catch (e) { core.warning(`Could not post start reaction: ${e.message}`); }
 
 
   # -- PREPARE ---------------------------------------------------------------
