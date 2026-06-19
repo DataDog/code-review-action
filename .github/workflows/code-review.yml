@@ -612,10 +612,9 @@ jobs:
         EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
       with:
         script: |
-          const fs   = require('node:fs');
-          const path = require('node:path');
+          const fs = require('node:fs');
           const { hasToken, hasCanary, makeFallback } =
-            require(path.join(process.env.GITHUB_WORKSPACE, '_prepare/scripts/scan'));
+            require(`${process.env.GITHUB_WORKSPACE}/_prepare/scripts/scan`);
 
           const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
           const write  = (obj) => {
@@ -629,40 +628,46 @@ jobs:
             return;
           }
 
-          const log   = fs.readFileSync(execFile, 'utf8');
-          const lines = log.trim().split('\n');
-          let review  = null;
-
-          // Walk backwards through JSONL to find the last message containing
-          // the review JSON.
-          for (let i = lines.length - 1; i >= 0; i--) {
-            let obj;
-            try { obj = JSON.parse(lines[i]); } catch { continue; }
-
-            let text = '';
-            if (typeof obj.result === 'string')       text = obj.result;
-            else if (typeof obj.message === 'string') text = obj.message;
-            else if (Array.isArray(obj.content))
-              text = obj.content.filter(c => c.type === 'text').map(c => c.text || '').join('');
-            else if (typeof obj.content === 'string') text = obj.content;
-            // Claude Code SDK v2: assistant messages nest content under obj.message.content
-            else if (obj.message && Array.isArray(obj.message.content))
-              text = obj.message.content.filter(c => c.type === 'text').map(c => c.text || '').join('');
-            if (!text) continue;
-
-            const start = text.indexOf('{');
-            const end   = text.lastIndexOf('}');
-            if (start === -1 || end === -1) continue;
-            try {
-              const candidate = JSON.parse(text.slice(start, end + 1));
-              if (candidate.body !== undefined && candidate.event !== undefined && Array.isArray(candidate.comments)) {
-                review = candidate; break;
+          // The action writes execution_file as a pretty-printed JSON array of
+          // SDK messages (JSON.stringify(messages, null, 2)), not JSONL.
+          // Parse as one document and find the last assistant text message.
+          let last = null;
+          try {
+            const messages = JSON.parse(fs.readFileSync(execFile, 'utf8'));
+            if (!Array.isArray(messages)) throw new Error('expected JSON array');
+            for (const entry of messages) {
+              if (!entry || entry.type !== 'assistant') continue;
+              const content = (entry.message && entry.message.content) || [];
+              for (const part of content) {
+                if (part && part.type === 'text' &&
+                    typeof part.text === 'string' && part.text.trim()) {
+                  last = part.text;
+                }
               }
-            } catch {}
+            }
+          } catch (e) {
+            core.warning(`could not parse execution_file: ${e.message}`);
+            write(makeFallback(`could not parse Claude execution log (${e.message})`, runUrl));
+            return;
           }
 
-          if (!review) {
-            write(makeFallback('could not parse review JSON from execution log', runUrl));
+          if (last === null) {
+            write(makeFallback('Claude did not produce a final assistant message', runUrl));
+            return;
+          }
+
+          // Tolerate preamble/postamble or ```json fences — slice from first { to last }.
+          let candidate = last.trim();
+          const firstBrace = candidate.indexOf('{');
+          const lastBrace  = candidate.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace > firstBrace) {
+            candidate = candidate.slice(firstBrace, lastBrace + 1);
+          }
+
+          let review;
+          try { review = JSON.parse(candidate); }
+          catch (e) {
+            write(makeFallback(`model output did not parse as JSON (${e.message})`, runUrl));
             return;
           }
 
