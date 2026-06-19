@@ -1052,7 +1052,8 @@ jobs:
       contents:      read
       pull-requests: write
     outputs:
-      scan_status: ${{ steps.scan.outputs.status }}
+      scan_status:    ${{ steps.scan.outputs.status }}
+      review_event:   ${{ steps.scan.outputs.event }}
     steps:
     - name: Download review artifact
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1188,10 +1189,11 @@ jobs:
     - name: Close check-run and update reaction
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
       env:
-        CHECK_RUN_ID: ${{ needs.gate.outputs.check_run_id }}
-        TRIGGER_MODE: ${{ inputs.trigger_mode }}
-        POST_RESULT:  ${{ needs.post.result }}
-        SCAN_STATUS:  ${{ needs.post.outputs.scan_status }}
+        CHECK_RUN_ID:  ${{ needs.gate.outputs.check_run_id }}
+        TRIGGER_MODE:  ${{ inputs.trigger_mode }}
+        POST_RESULT:   ${{ needs.post.result }}
+        SCAN_STATUS:   ${{ needs.post.outputs.scan_status }}
+        REVIEW_EVENT:  ${{ needs.post.outputs.review_event }}
       with:
         script: |
           const checkRunId  = Number(process.env.CHECK_RUN_ID);
@@ -1218,10 +1220,13 @@ jobs:
             } catch (e) { core.warning(`Could not update check-run: ${e.message}`); }
           }
 
-          // Swap the 👀 reaction for 🚀 (success) or 😕 (failure).
+          // Remove 👀 and optionally replace with 🚀 (success) or 😕 (failure).
+          // For REQUEST_CHANGES the eyes are removed but no new reaction is posted —
+          // a rocket would feel misleading when changes are being requested.
           if (triggerMode === 'on_demand' && context.payload.comment?.id) {
             const { owner, repo } = context.repo;
             const commentId = context.payload.comment.id;
+            const reviewEvent = process.env.REVIEW_EVENT || 'COMMENT';
 
             // Remove stale bot reactions (👀 from start_signal, any leftover from a prior run).
             try {
@@ -1239,10 +1244,12 @@ jobs:
               }
             } catch (e) { core.warning(`Could not list reactions: ${e.message}`); }
 
-            try {
-              await github.rest.reactions.createForIssueComment({
-                owner, repo, comment_id: commentId,
-                content: conclusion === 'success' ? 'rocket' : 'confused',
-              });
-            } catch (e) { core.warning(`Could not post completion reaction: ${e.message}`); }
+            if (reviewEvent !== 'REQUEST_CHANGES') {
+              try {
+                await github.rest.reactions.createForIssueComment({
+                  owner, repo, comment_id: commentId,
+                  content: conclusion === 'success' ? 'rocket' : 'confused',
+                });
+              } catch (e) { core.warning(`Could not post completion reaction: ${e.message}`); }
+            }
           }
