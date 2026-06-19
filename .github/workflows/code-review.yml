@@ -1224,9 +1224,10 @@ jobs:
             } catch (e) { core.warning(`Could not update check-run: ${e.message}`); }
           }
 
-          // Remove 👀 and optionally replace with 🚀 (success) or 😕 (failure).
-          // For REQUEST_CHANGES the eyes are removed but no new reaction is posted —
-          // a rocket would feel misleading when changes are being requested.
+          // Remove 👀, then post a replacement only in specific cases:
+          //   🚀  when the review event is APPROVE
+          //   😕  when the post job itself failed (technical failure, not a review finding)
+          //   (nothing) for COMMENT, REQUEST_CHANGES, or any other outcome
           if (triggerMode === 'on_demand' && context.payload.comment?.id) {
             const { owner, repo } = context.repo;
             const commentId = context.payload.comment.id;
@@ -1248,11 +1249,14 @@ jobs:
               }
             } catch (e) { core.warning(`Could not list reactions: ${e.message}`); }
 
-            if (reviewEvent !== 'REQUEST_CHANGES') {
+            let newReaction = null;
+            if (reviewEvent === 'APPROVE')      newReaction = 'rocket';
+            else if (conclusion === 'failure')  newReaction = 'confused';
+
+            if (newReaction) {
               try {
                 await github.rest.reactions.createForIssueComment({
-                  owner, repo, comment_id: commentId,
-                  content: conclusion === 'success' ? 'rocket' : 'confused',
+                  owner, repo, comment_id: commentId, content: newReaction,
                 });
               } catch (e) { core.warning(`Could not post completion reaction: ${e.message}`); }
             }
