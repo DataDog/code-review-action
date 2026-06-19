@@ -536,6 +536,24 @@ jobs:
         name: ai-review-prepare
         path: _prepare
 
+    - name: Checkout default branch at workspace root (sparse)
+      # claude-code-action requires a git repo at the workspace root for its
+      # security setup (git rev-parse --git-path info/exclude, origin/main
+      # restore of trusted config files). Checking out the default branch here
+      # (not the PR head) keeps the workspace root trusted; the PR content is
+      # isolated under __untrusted/ below.
+      # No calling-repo files are needed here — all review inputs come from the
+      # _prepare/ artifacts and __untrusted/. Sparse-checkout of .github/workflows
+      # is the minimum anchor that is always present and keeps the clone tiny.
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        ref: ${{ github.event.repository.default_branch }}
+        persist-credentials: false
+        fetch-depth: 1
+        sparse-checkout: |
+          .github/workflows
+        sparse-checkout-cone-mode: false
+
     - name: Checkout PR head into __untrusted/
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
