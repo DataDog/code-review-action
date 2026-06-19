@@ -645,6 +645,9 @@ jobs:
             else if (Array.isArray(obj.content))
               text = obj.content.filter(c => c.type === 'text').map(c => c.text || '').join('');
             else if (typeof obj.content === 'string') text = obj.content;
+            // Claude Code SDK v2: assistant messages nest content under obj.message.content
+            else if (obj.message && Array.isArray(obj.message.content))
+              text = obj.message.content.filter(c => c.type === 'text').map(c => c.text || '').join('');
             if (!text) continue;
 
             const start = text.indexOf('{');
