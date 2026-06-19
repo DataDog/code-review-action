@@ -936,6 +936,10 @@ jobs:
     - name: Run Gemini CLI
       id: gemini
       uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
+      env:
+        # Required for headless/automated environments — without this Gemini CLI
+        # refuses to run because the workspace is not interactively trusted.
+        GEMINI_CLI_TRUST_WORKSPACE: "true"
       with:
         gemini_api_key: ${{ secrets.gemini_api_key }}
         prompt:         ${{ steps.gemini_prompt.outputs.content }}
