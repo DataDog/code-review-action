@@ -395,6 +395,11 @@ jobs:
         }
         module.exports = { hasToken, hasCanary, makeFallback };
         SCRIPT
+        # Anchor Node.js module resolution here so it never walks up past
+        # _prepare/scripts/ into the workspace root. Without this, claude-code-action
+        # may leave a package.json at the workspace root that Node.js finds first
+        # and rejects as an invalid package config.
+        echo '{"type":"commonjs"}' > _prepare/scripts/package.json
 
     - name: Aggregate guidelines
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
