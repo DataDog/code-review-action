@@ -12,7 +12,7 @@ jobs:
             checks: write
         uses: DataDog/code-review-action/.github/workflows/code-review.yml@feat/ai-code-review-action
         with:
-            provider: codex
+            provider: claude
             trigger_mode: on_demand
             review_event: ALL
             prompt_file: prompt.md
