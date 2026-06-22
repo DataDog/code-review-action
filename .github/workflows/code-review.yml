@@ -316,14 +316,14 @@ jobs:
       pull-requests: read
     steps:
     - name: Checkout calling repo (for local diff generation)
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       with:
         fetch-depth: 0
         persist-credentials: false
 
     - name: Checkout prompt files from default branch (sparse)
       if: inputs.prompt_file != ''
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       with:
         ref: ${{ github.event.repository.default_branch }}
         path: __trusted
@@ -583,7 +583,7 @@ jobs:
       # is the minimum anchor that is always present and keeps the clone tiny.
       # This step must run BEFORE artifact downloads: actions/checkout cleans the
       # workspace by default, which would delete any previously downloaded files.
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       with:
         ref: ${{ github.event.repository.default_branch }}
         persist-credentials: false
@@ -593,7 +593,7 @@ jobs:
         sparse-checkout-cone-mode: false
 
     - name: Checkout PR head into __untrusted/
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       with:
         ref: ${{ needs.gate.outputs.head_sha }}
         path: __untrusted
@@ -767,7 +767,7 @@ jobs:
       pull-requests: read
     steps:
     - name: Checkout PR head
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       with:
         ref: ${{ needs.gate.outputs.head_sha }}
         persist-credentials: false
@@ -925,7 +925,7 @@ jobs:
         path: _prepare
 
     - name: Checkout PR head into __untrusted/
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       with:
         ref: ${{ needs.gate.outputs.head_sha }}
         path: __untrusted
