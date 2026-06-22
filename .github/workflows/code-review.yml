@@ -372,8 +372,8 @@ jobs:
         const CANARY_PATTERNS = [
           /(?:curl|wget|nc|bash|sh\s+-c|eval)\s+/i,
           /\bexec\s+["'\/\-]/i,
-          />>?\s*['"]?\$GITHUB_OUTPUT['"]?/,
-          />>?\s*['"]?\$GITHUB_ENV['"]?/,
+          />>?\s*\$GITHUB_OUTPUT/,
+          />>?\s*\$GITHUB_ENV/,
         ];
         function hasToken(v) {
           if (typeof v === 'string') return TOKEN_PATTERNS.some(p => p.test(v));
