@@ -58,7 +58,7 @@ Add the API key for your chosen provider as a repository secret:
 | Name | Type | Default | Description |
 |---|---|---|---|
 | `provider` | string | `claude` | AI provider: `claude`, `codex`, or `gemini`. |
-| `trigger_mode` | string | `always` | `always` runs on PR events; `on_demand` requires a `/review` comment from a write-access collaborator. |
+| `trigger_mode` | string | `always` | `always` runs on PR events; `on_demand` requires a `/dd-review` comment from a write-access collaborator. |
 | `prompt_file` | string | `""` | Newline-separated list of Markdown review guide paths (read from the default branch). Root-level files apply to all PRs; subdirectory files apply only when changed files share that prefix. Falls back to a built-in prompt when empty or no file matches. |
 
 ## Custom review guide
@@ -114,6 +114,7 @@ Both `review_*` and `post` scan AI output for:
 - GitHub token patterns (`ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_`, `github_pat_`)
 - Anthropic API keys (`sk-ant-*`)
 - OpenAI keys (`sk-proj-*`, `sk-svcacct-*`, `sk-*`)
+- Google Gemini API keys (`AIzaSy*`)
 - AWS access keys (`AKIA*`)
 - Private key headers
 - Slack tokens (`xox[bpasr]-*`)
@@ -135,11 +136,10 @@ AI output is checked for shell commands (`curl`, `wget`, `bash`, etc.) and attem
 
 ## Schemas
 
-- [`schemas/github-review.json`](schemas/github-review.json) — JSON schema for the Claude/Gemini review payload (GitHub `POST /pulls/{n}/reviews` shape).
-- [`schemas/codex-output.json`](schemas/codex-output.json) — JSON schema for Codex findings output, mapped to the GitHub review shape in the normalization step.
+- [`schemas/github-review.json`](schemas/github-review.json) — JSON schema for the AI review payload (GitHub `POST /pulls/{n}/reviews` shape). Used by Claude and Gemini; Codex uses the same shape via an inline schema written at runtime.
 
 ## Limitations
 
 - Fork PRs are not reviewed in `always` mode (provider API keys would be exposed to untrusted code). Use `on_demand` if you want to review fork PRs selectively.
-- The `gemini` provider uses `--yolo` (auto-approve all tool calls) as required by the upstream action. Tool restriction is enforced via the `settings` input; verify the `coreTools` names against your Gemini CLI version.
+- The `gemini` provider uses `--yolo` (auto-approve all tool calls) as required by the upstream action. Tool restriction is enforced via the `settings` input using `tools.core` with snake_case built-in names (`read_file`, `glob`, `grep_search`, `list_directory`).
 - All three providers use the same output format (`github-review.json` shape). The `review_event` policy controls whether `REQUEST_CHANGES` and `APPROVE` are passed through or downgraded to `COMMENT`.

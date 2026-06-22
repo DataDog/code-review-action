@@ -366,6 +366,7 @@ jobs:
           /sk-[A-Za-z0-9]{48,}/,
           /AKIA[A-Z0-9]{16}/,
           /xox[bpasr]-[A-Za-z0-9\-]{10,}/,
+          /AIzaSy[A-Za-z0-9_\-]{35}/,
           /BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY/,
         ];
         const CANARY_PATTERNS = [
@@ -774,15 +775,15 @@ jobs:
               "maxItems": 100,
               "items": {
                 "type": "object",
-                "required": ["path", "body", "line", "side", "start_line", "start_side"],
+                "required": ["path", "body", "line"],
                 "additionalProperties": false,
                 "properties": {
                   "path":       { "type": "string" },
                   "body":       { "type": "string" },
                   "line":       { "type": "integer", "minimum": 1 },
-                  "side":       { "anyOf": [{ "type": "string", "enum": ["LEFT", "RIGHT"] }, { "type": "null" }] },
-                  "start_line": { "anyOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }] },
-                  "start_side": { "anyOf": [{ "type": "string", "enum": ["LEFT", "RIGHT"] }, { "type": "null" }] }
+                  "side":       { "type": "string", "enum": ["LEFT", "RIGHT"] },
+                  "start_line": { "type": "integer", "minimum": 1 },
+                  "start_side": { "type": "string", "enum": ["LEFT", "RIGHT"] }
                 }
               }
             }
