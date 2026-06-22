@@ -332,18 +332,6 @@ jobs:
         sparse-checkout: ${{ inputs.prompt_file }}
         sparse-checkout-cone-mode: false
 
-    - name: Fetch PR head into local ODB
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-        PR_NUMBER:    ${{ needs.gate.outputs.pr_number }}
-      run: |
-        # On issue_comment triggers the checkout only fetches the default branch;
-        # explicitly fetch the PR head so HEAD_SHA is in the local ODB before diff.
-        # Token is scoped to this step only; GITHUB_TOKEN is masked in logs.
-        git fetch --no-tags \
-          "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-          "+refs/pull/${PR_NUMBER}/head"
-
     - name: Generate PR diff and changed file list via local git
       env:
         BASE_SHA:  ${{ needs.gate.outputs.base_sha }}
