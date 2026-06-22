@@ -394,7 +394,33 @@ jobs:
             comments: [],
           };
         }
-        module.exports = { hasToken, hasCanary, makeFallback };
+        const VALID_EVENTS = ['COMMENT', 'REQUEST_CHANGES', 'APPROVE'];
+        function validateReview(review) {
+          const errors = [];
+          if (typeof review.body !== 'string')
+            errors.push('body must be a string');
+          if (!VALID_EVENTS.includes(review.event))
+            errors.push(`event must be one of ${VALID_EVENTS.join('|')}`);
+          if (!Array.isArray(review.comments)) {
+            errors.push('comments must be an array');
+          } else {
+            for (let i = 0; i < review.comments.length; i++) {
+              const c = review.comments[i];
+              if (!c || typeof c !== 'object') {
+                errors.push(`comments[${i}] must be an object`);
+              } else {
+                if (typeof c.path !== 'string')
+                  errors.push(`comments[${i}].path must be a string`);
+                if (typeof c.body !== 'string')
+                  errors.push(`comments[${i}].body must be a string`);
+                if (!Number.isInteger(c.line) || c.line < 1)
+                  errors.push(`comments[${i}].line must be a positive integer`);
+              }
+            }
+          }
+          return { errors };
+        }
+        module.exports = { hasToken, hasCanary, makeFallback, validateReview };
         SCRIPT
         # Anchor Node.js module resolution here so it never walks up past
         # _prepare/scripts/ into the workspace root. Without this, claude-code-action
@@ -477,6 +503,12 @@ jobs:
               if (!pf) continue;
 
               const trustedPath = path.join('__trusted', pf);
+              const absoluteTrustedDir = path.resolve('__trusted');
+              const absolutePath      = path.resolve(trustedPath);
+              if (!absolutePath.startsWith(absoluteTrustedDir + path.sep)) {
+                core.setFailed(`Path traversal detected in prompt_file entry: '${pf}'`);
+                return;
+              }
               if (!fs.existsSync(trustedPath)) {
                 core.setFailed(`prompt_file entry '${pf}' was not found on the default branch. Correct the path or remove the entry.`);
                 return;
@@ -1080,7 +1112,7 @@ jobs:
         script: |
           const fs   = require('node:fs');
           const path = require('node:path');
-          const { hasToken, hasCanary } =
+          const { hasToken, hasCanary, validateReview } =
             require(path.join(process.env.GITHUB_WORKSPACE, '_prepare/scripts/scan'));
 
           const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
@@ -1091,11 +1123,7 @@ jobs:
 
           // Schema validation: ensure the artifact has the expected shape before
           // any field is used in a GitHub API call.
-          const validEvents = ['COMMENT', 'REQUEST_CHANGES', 'APPROVE'];
-          const errs = [];
-          if (typeof review.body !== 'string')         errs.push('body must be a string');
-          if (!validEvents.includes(review.event))     errs.push(`event must be one of ${validEvents.join('|')}`);
-          if (!Array.isArray(review.comments))         errs.push('comments must be an array');
+          const { errors: errs } = validateReview(review);
           if (errs.length) {
             core.warning(`review.json schema errors: ${errs.join('; ')} - replacing with failure notice`);
             review = {
@@ -1187,7 +1215,7 @@ jobs:
   finish_signal:
     name: Finalize request signal
     needs: [gate, start_signal, post]
-    if: always() && needs.gate.result == 'success'
+    if: always() && needs.gate.result == 'success' && needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
