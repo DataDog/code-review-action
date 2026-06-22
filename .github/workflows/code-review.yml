@@ -334,9 +334,13 @@ jobs:
 
     - name: Generate PR diff and changed file list via local git
       env:
-        BASE_SHA: ${{ needs.gate.outputs.base_sha }}
-        HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+        BASE_SHA:  ${{ needs.gate.outputs.base_sha }}
+        HEAD_SHA:  ${{ needs.gate.outputs.head_sha }}
+        PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
       run: |
+        # On issue_comment triggers the checkout only fetches the default branch;
+        # explicitly fetch the PR head so HEAD_SHA is available in the local ODB.
+        git fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head"
         mkdir -p _prepare
         git diff "${BASE_SHA}...${HEAD_SHA}"           > _prepare/diff.patch
         git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > _prepare/changed_files.txt
@@ -944,16 +948,18 @@ jobs:
         gemini_api_key: ${{ secrets.gemini_api_key }}
         prompt:         ${{ steps.gemini_prompt.outputs.content }}
         # Restrict Gemini CLI to read-only tools via settings JSON.
-        # coreTools limits the built-in tool set; the exact names depend on the
-        # Gemini CLI version - verify against the CLI docs when updating.
+        # tools.core allowlist uses snake_case names from the Gemini CLI built-ins;
+        # omitting run_shell_command, write_file, etc. enforces a read-only sandbox.
         settings: |
           {
-            "coreTools": [
-              "ReadFileTool",
-              "GlobTool",
-              "GrepTool",
-              "LSTool"
-            ]
+            "tools": {
+              "core": [
+                "read_file",
+                "glob",
+                "grep_search",
+                "list_directory"
+              ]
+            }
           }
 
     - name: Extract, validate, and scan Gemini output
