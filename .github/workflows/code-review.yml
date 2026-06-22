@@ -366,14 +366,14 @@ jobs:
           /sk-[A-Za-z0-9]{48,}/,
           /AKIA[A-Z0-9]{16}/,
           /xox[bpasr]-[A-Za-z0-9\-]{10,}/,
-          /AIzaSy[A-Za-z0-9_\-]{35}/,
+          /AIzaSy[A-Za-z0-9_\-]{33,39}/,
           /BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY/,
         ];
         const CANARY_PATTERNS = [
           /(?:curl|wget|nc|bash|sh\s+-c|eval)\s+/i,
           /\bexec\s+["'\/\-]/i,
-          />>?\s*\$GITHUB_OUTPUT/,
-          />>?\s*\$GITHUB_ENV/,
+          />>?\s*['"]?\$GITHUB_OUTPUT['"]?/,
+          />>?\s*['"]?\$GITHUB_ENV['"]?/,
         ];
         function hasToken(v) {
           if (typeof v === 'string') return TOKEN_PATTERNS.some(p => p.test(v));
@@ -397,6 +397,10 @@ jobs:
         const VALID_EVENTS = ['COMMENT', 'REQUEST_CHANGES', 'APPROVE'];
         function validateReview(review) {
           const errors = [];
+          if (!review || typeof review !== 'object') {
+            errors.push('review must be a non-null object');
+            return { errors };
+          }
           if (typeof review.body !== 'string')
             errors.push('body must be a string');
           if (!VALID_EVENTS.includes(review.event))
