@@ -1,0 +1,8 @@
+Component,Origin,License,Copyright
+core,actions/checkout,MIT,Copyright (c) 2018 GitHub Inc. and contributors
+core,actions/download-artifact,MIT,Copyright (c) 2018 GitHub Inc. and contributors
+core,actions/github-script,MIT,Copyright (c) 2019 GitHub Inc. and contributors
+core,actions/upload-artifact,MIT,Copyright (c) 2018 GitHub Inc. and contributors
+core,anthropics/claude-code-action,MIT,Copyright (c) 2025 Anthropic PBC
+core,google-github-actions/run-gemini-cli,Apache-2.0,Copyright (c) 2025 Google LLC
+core,openai/codex-action,Apache-2.0,Copyright (c) 2025 OpenAI

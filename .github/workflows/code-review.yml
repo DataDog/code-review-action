@@ -774,8 +774,8 @@ jobs:
         fetch-depth: 1
 
     - name: Strip AI instruction files
-      # Remove files that could override Codex's system prompt or tool behaviour.
-      # See DataDog internal AI Actions security guidance for the canonical list.
+      # Remove files that could override an AI action's system prompt or tool behaviour.
+      # These files are stripped to prevent prompt injection via repository contents.
       run: |
         find . -maxdepth 5 \( \
           -name "AGENTS.md" -o \
