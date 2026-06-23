@@ -20,10 +20,6 @@ Use the GitHub issue tracker. Please include:
 - Keep PRs focused — one logical change per PR.
 - Update documentation (`README.md`) if your change affects behaviour or inputs.
 
-## Code of Conduct
-
-This project follows the [Datadog Code of Conduct](https://github.com/DataDog/.github/blob/main/CODE_OF_CONDUCT.md).
-
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [Apache 2.0 License](LICENSE).
