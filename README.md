@@ -34,7 +34,7 @@ on:
 
 jobs:
   review:
-    uses: DataDog/code-review-action/.github/workflows/code-review.yml@main
+    uses: DataDog/code-review-action/.github/workflows/code-review.yml@355e6507276ad912a4cd82f8bc1b363cede290a4 # v1.0.0
     with:
       provider:      claude        # claude | codex | gemini
       trigger_mode:  on_demand     # always | on_demand
