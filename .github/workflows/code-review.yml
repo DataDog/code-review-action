@@ -161,6 +161,7 @@ jobs:
       head_sha:     ${{ steps.gate.outputs.head_sha }}
       base_sha:     ${{ steps.gate.outputs.base_sha }}
       check_run_id: ${{ steps.gate.outputs.check_run_id }}
+      provider:     ${{ steps.gate.outputs.provider }}
     steps:
     - name: Verify trigger, authorize, and resolve SHAs
       id: gate
@@ -173,6 +174,7 @@ jobs:
           const triggerMode = process.env.TRIGGER_MODE;
           const provider    = process.env.PROVIDER;
           let prNumber;
+          let effectiveProvider = provider;
 
           core.setOutput('proceed', 'false');
 
@@ -186,6 +188,18 @@ jobs:
             const body = (context.payload.comment?.body || '').trimStart();
             if (!body.startsWith('/dd-review')) {
               core.info('Skipping: comment body does not start with /dd-review'); return;
+            }
+            // Optional provider override: /dd-review [provider]
+            const tokens = body.split(/\s+/);
+            if (tokens.length > 1 && tokens[1]) {
+              const override = tokens[1].toLowerCase();
+              const allowed  = ['claude', 'codex', 'gemini'];
+              if (!allowed.includes(override)) {
+                core.warning(`Unknown provider '${tokens[1]}', must be one of: ${allowed.join(', ')}. Falling back to workflow default: ${provider}.`);
+              } else {
+                effectiveProvider = override;
+                core.info(`Provider override: ${override} (workflow default: ${provider})`);
+              }
             }
             const actor = context.payload.comment?.user?.login || '';
             // Sentinel must never match: underscores are invalid in GitHub logins.
@@ -232,10 +246,11 @@ jobs:
           if (!headSha) { core.setFailed('empty head_sha'); return; }
           if (!baseSha) { core.setFailed('empty base_sha'); return; }
 
-          core.setOutput('proceed',   'true');
-          core.setOutput('pr_number', String(prNumber));
-          core.setOutput('head_sha',  headSha);
-          core.setOutput('base_sha',  baseSha);
+          core.setOutput('proceed',        'true');
+          core.setOutput('pr_number',      String(prNumber));
+          core.setOutput('head_sha',       headSha);
+          core.setOutput('base_sha',       baseSha);
+          core.setOutput('provider',       effectiveProvider);
 
           // Create an in-progress check-run so the PR status area links to this run.
           // Output the ID so the post job can mark it completed.
@@ -243,7 +258,7 @@ jobs:
           try {
             const { data: cr } = await github.rest.checks.create({
               owner: context.repo.owner, repo: context.repo.repo,
-              name:        `AI Code Review (${provider})`,
+              name:        `AI Code Review (${effectiveProvider})`,
               head_sha:    headSha,
               status:      'in_progress',
               details_url: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
@@ -562,7 +577,7 @@ jobs:
   review_claude:
     name: Review (Claude)
     needs: [gate, prepare]
-    if: needs.gate.outputs.proceed == 'true' && inputs.provider == 'claude'
+    if: needs.gate.outputs.proceed == 'true' && needs.gate.outputs.provider == 'claude'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -760,7 +775,7 @@ jobs:
   review_codex:
     name: Review (Codex)
     needs: [gate, prepare]
-    if: needs.gate.outputs.proceed == 'true' && inputs.provider == 'codex'
+    if: needs.gate.outputs.proceed == 'true' && needs.gate.outputs.provider == 'codex'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -912,7 +927,7 @@ jobs:
   review_gemini:
     name: Review (Gemini)
     needs: [gate, prepare]
-    if: needs.gate.outputs.proceed == 'true' && inputs.provider == 'gemini'
+    if: needs.gate.outputs.proceed == 'true' && needs.gate.outputs.provider == 'gemini'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1158,7 +1173,7 @@ jobs:
       env:
         PR_NUMBER:    ${{ needs.gate.outputs.pr_number }}
         HEAD_SHA:     ${{ needs.gate.outputs.head_sha }}
-        PROVIDER:     ${{ inputs.provider }}
+        PROVIDER:     ${{ needs.gate.outputs.provider }}
         REVIEW_EVENT: ${{ inputs.review_event }}
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
