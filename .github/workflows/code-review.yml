@@ -826,15 +826,15 @@ jobs:
               "maxItems": 100,
               "items": {
                 "type": "object",
-                "required": ["path", "body", "line"],
+                "required": ["path", "body", "line", "side", "start_line", "start_side"],
                 "additionalProperties": false,
                 "properties": {
                   "path":       { "type": "string" },
                   "body":       { "type": "string" },
                   "line":       { "type": "integer", "minimum": 1 },
-                  "side":       { "type": "string", "enum": ["LEFT", "RIGHT"] },
-                  "start_line": { "type": "integer", "minimum": 1 },
-                  "start_side": { "type": "string", "enum": ["LEFT", "RIGHT"] }
+                  "side":       { "anyOf": [{ "type": "string", "enum": ["LEFT", "RIGHT"] }, { "type": "null" }] },
+                  "start_line": { "anyOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }] },
+                  "start_side": { "anyOf": [{ "type": "string", "enum": ["LEFT", "RIGHT"] }, { "type": "null" }] }
                 }
               }
             }
@@ -1191,7 +1191,12 @@ jobs:
           const header = `*AI review by ${providerLabel} - [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})*`;
           const body   = [header, '', review.body || ''].join('\n');
 
-          const comments = Array.isArray(review.comments) ? review.comments : [];
+          // Strip null fields from each comment — Codex nullable schema outputs null
+          // for optional fields (side, start_line, start_side) that the GitHub API rejects.
+          const rawComments = Array.isArray(review.comments) ? review.comments : [];
+          const comments = rawComments.map(c =>
+            Object.fromEntries(Object.entries(c).filter(([, v]) => v !== null))
+          );
           // Enforce review_event policy. COMMENT_ONLY prevents the bot from
           // blocking merges or satisfying branch-protection approval rules.
           const allowedEvents = ['COMMENT', 'REQUEST_CHANGES', 'APPROVE'];
