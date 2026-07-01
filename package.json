@@ -1,0 +1,7 @@
+{
+  "name": "code-review-action",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/scan.test.js tests/workflow.test.js"
+  }
+}
