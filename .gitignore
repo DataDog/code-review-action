@@ -1,2 +1,3 @@
-.python-version
-.oss-readiness/
+node_modules/
+.nyc_output/
+coverage/
