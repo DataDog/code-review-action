@@ -2,6 +2,19 @@
   "name": "code-review-action",
   "private": true,
   "scripts": {
-    "test": "node --test tests/scan.test.js tests/workflow.test.js"
+    "test": "nyc mocha 'tests/**/*.test.js'"
+  },
+  "devDependencies": {
+    "dd-trace": "^5.110.0",
+    "mocha": "^10.8.2",
+    "nyc": "^18.0.0"
+  },
+  "mocha": {
+    "ui": "tdd",
+    "spec": "tests/**/*.test.js"
+  },
+  "nyc": {
+    "include": ["src/**/*.js"],
+    "reporter": ["text", "lcov"]
   }
 }

@@ -1,6 +1,5 @@
 'use strict';
-const { test } = require('node:test');
-const assert  = require('node:assert/strict');
+const assert = require('node:assert/strict');
 const { hasToken, hasCanary, makeFallback, validateReview } = require('../src/scan.js');
 
 // ---------------------------------------------------------------------------
