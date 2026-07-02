@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required by dd-sts-action to exchange OIDC token
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+    - name: Get Datadog credentials
+      id: dd-sts
+      uses: DataDog/dd-sts-action@7d2d231c02fd54a3da912e582ff87cb995d1fd30 # v1.0.4
+      with:
+        policy: code-review-action-ci
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run tests with coverage
+      env:
+        NODE_OPTIONS: -r dd-trace/ci/init
+        DD_CIVISIBILITY_AGENTLESS_ENABLED: 'true'
+        DD_API_KEY: ${{ steps.dd-sts.outputs.api_key }}
+        DD_SERVICE: code-review-action
+        DD_ENV: ci
+      run: npm test
+
+  actionlint:
+    name: Lint workflow YAML
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - name: Install actionlint
+      run: |
+        VERSION=1.7.12
+        curl -sL "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz" \
+          | tar xz -C /usr/local/bin actionlint
+    - name: Run actionlint
+      run: actionlint .github/workflows/code-review.yml .github/workflows/ci.yml
