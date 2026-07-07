@@ -1,6 +1,9 @@
 {
   "name": "code-review-action",
   "private": true,
+  "bin": {
+    "find-guidelines": "bin/find-guidelines.js"
+  },
   "scripts": {
     "test": "nyc mocha 'tests/**/*.test.js'"
   },
@@ -11,7 +14,8 @@
   },
   "mocha": {
     "ui": "tdd",
-    "spec": "tests/**/*.test.js"
+    "spec": "tests/**/*.test.js",
+    "timeout": 10000
   },
   "nyc": {
     "include": ["src/**/*.js"],

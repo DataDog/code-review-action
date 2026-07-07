@@ -21,8 +21,14 @@
 # Trust boundary:
 #   prepare/__trusted/   sparse checkout of the *default branch* (prompt files
 #                        only). The PR cannot influence files here.
+#   prepare/_action/     self-checkout of this action's own repo, pinned to
+#                        job.workflow_sha (the exact commit the caller's
+#                        `uses:` line resolved to). Equivalent trust to this
+#                        YAML file itself - lets scan.js/guidelines.js be
+#                        required directly instead of duplicated inline.
 #   review_*/__untrusted/ PR head checkout. Full repo at PR state for reference during review.
-#   _prepare/            artifacts from prepare: guidelines.md + diff.patch.
+#   _prepare/            artifacts from prepare: guidelines.md + diff.patch +
+#                        scripts/ (copied from _action/src/, not the PR).
 #                        Produced from trusted sources only.
 #
 # Do NOT add extra secrets (API keys, tokens) to review_* via env:/with:/secrets.
@@ -75,6 +81,7 @@
 #         prompt_file: |               # optional, newline-separated list
 #           guide.md
 #           bazel/guide.md
+#         # prompt_file_pattern: '**/codereview_guideline.md'  # optional, mutually exclusive with prompt_file
 #       secrets:
 #         anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 #         # openai_api_key:   ${{ secrets.OPENAI_API_KEY }}   # for codex
@@ -102,7 +109,20 @@ on:
           applies to every PR; a file under a subdirectory (e.g. bazel/guide.md)
           applies only when at least one changed file lives under that directory.
           Falls back to a built-in prompt when empty or when no listed file
-          matches the PR's changed files.
+          matches the PR's changed files. Mutually exclusive with
+          prompt_file_pattern.
+        type: string
+        default: ''
+      prompt_file_pattern:
+        description: |
+          Glob pattern (relative to the repo root, evaluated against the
+          default branch) used to auto-discover review guide files instead of
+          listing them explicitly, e.g. '**/codereview_guideline.md' matches a
+          guide in every directory. Every matched file follows the same
+          scoping rule as prompt_file: a root-level match applies to every PR;
+          a match under a subdirectory applies only when at least one changed
+          file lives under that directory. Mutually exclusive with
+          prompt_file.
         type: string
         default: ''
       review_event:
@@ -167,8 +187,10 @@ jobs:
       id: gate
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
       env:
-        TRIGGER_MODE: ${{ inputs.trigger_mode }}
-        PROVIDER:     ${{ inputs.provider }}
+        TRIGGER_MODE:        ${{ inputs.trigger_mode }}
+        PROVIDER:            ${{ inputs.provider }}
+        PROMPT_FILE:         ${{ inputs.prompt_file }}
+        PROMPT_FILE_PATTERN: ${{ inputs.prompt_file_pattern }}
       with:
         script: |
           const triggerMode = process.env.TRIGGER_MODE;
@@ -177,6 +199,11 @@ jobs:
           let effectiveProvider = provider;
 
           core.setOutput('proceed', 'false');
+
+          if ((process.env.PROMPT_FILE || '').trim() && (process.env.PROMPT_FILE_PATTERN || '').trim()) {
+            core.setFailed('prompt_file and prompt_file_pattern are mutually exclusive - set only one.');
+            return;
+          }
 
           if (triggerMode === 'on_demand') {
             if (context.eventName !== 'issue_comment') {
@@ -318,9 +345,13 @@ jobs:
   #   - A file at the repo root (dirname == ".") applies to every PR.
   #   - A file under a subdirectory applies only when at least one changed
   #     file lives under that directory (prefix match).
-  #   - If prompt_file is empty, or no listed file matches, falls back to the
-  #     built-in default prompt. There is no implicit codereview_guideline.md
-  #     convention; the caller controls the list entirely.
+  #   - If prompt_file/prompt_file_pattern is empty, or no matched file
+  #     applies, falls back to the built-in default prompt. There is no
+  #     implicit codereview_guideline.md convention; the caller controls the
+  #     list (or pattern) entirely.
+  #   - prompt_file_pattern discovers files by glob instead of an explicit
+  #     list (e.g. '**/codereview_guideline.md'); every match is then subject
+  #     to the same scoping rule above. gate rejects setting both inputs.
   prepare:
     name: Prepare
     needs: gate
@@ -337,14 +368,17 @@ jobs:
         persist-credentials: false
 
     - name: Checkout prompt files from default branch (sparse)
-      if: inputs.prompt_file != ''
+      if: inputs.prompt_file != '' || inputs.prompt_file_pattern != ''
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
         ref: ${{ github.event.repository.default_branch }}
         path: __trusted
         persist-credentials: false
         fetch-depth: 1
-        sparse-checkout: ${{ inputs.prompt_file }}
+        # Non-cone sparse-checkout patterns use gitignore-style matching, so
+        # prompt_file_pattern (e.g. '**/codereview_guideline.md') works here
+        # the same way an explicit prompt_file list does.
+        sparse-checkout: ${{ inputs.prompt_file != '' && inputs.prompt_file || inputs.prompt_file_pattern }}
         sparse-checkout-cone-mode: false
 
     - name: Generate PR diff and changed file list via local git
@@ -357,90 +391,29 @@ jobs:
         git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > _prepare/changed_files.txt
         echo "Diff: $(wc -l < _prepare/diff.patch) lines, $(wc -l < _prepare/changed_files.txt) changed file(s)"
 
-    - name: Write shared scripts
-      # Writes scan.js once; review_* and post jobs load it from the artifact.
-      # Centralises the secret-scanning and canary patterns so they cannot
-      # diverge across jobs.
+    - name: Checkout code-review-action (self, pinned to the exact commit running)
+      # Reusable workflows only auto-checkout the caller repo, never their own.
+      # job.workflow_repository/job.workflow_sha resolve to *this* file's own
+      # repo+commit (not the caller's) even when called cross-repo, so this is
+      # guaranteed to match the exact ref the caller pinned in 'uses:' -
+      # letting scan.js/guidelines.js be required directly instead of inlined.
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+        path: _action
+        persist-credentials: false
+        fetch-depth: 1
+
+    - name: Stage shared scripts for cross-job use
+      # review_*/post jobs only receive the _prepare/ artifact, not the
+      # _action/ checkout above, so copy (not require) the two scripts they
+      # need. Centralises the secret-scanning/canary patterns and guideline
+      # discovery so they cannot diverge from src/scan.js and src/guidelines.js.
       run: |
         mkdir -p _prepare/scripts
-        cat > _prepare/scripts/scan.js << 'SCRIPT'
-        'use strict';
-        const TOKEN_PATTERNS = [
-          /ghp_[A-Za-z0-9_]{36,}/,
-          /gho_[A-Za-z0-9_]{36,}/,
-          /ghs_[A-Za-z0-9_]{36,}/,
-          /ghr_[A-Za-z0-9_]{36,}/,
-          /ghu_[A-Za-z0-9_]{36,}/,
-          /github_pat_[A-Za-z0-9_]{82,}/,
-          /sk-ant-api[0-9]{2}-[A-Za-z0-9_\-]+/,
-          /sk-ant-oat[0-9]{2}-[A-Za-z0-9_\-]+/,
-          /sk-ant-sid[0-9]{2}-[A-Za-z0-9_\-]+/,
-          /sk-ant-[A-Za-z0-9_\-]{20,}/,
-          /sk-proj-[A-Za-z0-9_\-]{20,}/,
-          /sk-svcacct-[A-Za-z0-9_\-]{20,}/,
-          /sk-[A-Za-z0-9]{48,}/,
-          /AKIA[A-Z0-9]{16}/,
-          /xox[bpasr]-[A-Za-z0-9\-]{10,}/,
-          /AIzaSy[A-Za-z0-9_\-]{33,39}/,
-          /BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY/,
-        ];
-        const CANARY_PATTERNS = [
-          /(?:curl|wget|nc|bash|sh\s+-c|eval)\s+/i,
-          /\bexec\s+["'\/\-]/i,
-          />>?\s*\$GITHUB_OUTPUT/,
-          />>?\s*\$GITHUB_ENV/,
-        ];
-        function hasToken(v) {
-          if (typeof v === 'string') return TOKEN_PATTERNS.some(p => p.test(v));
-          if (Array.isArray(v))      return v.some(hasToken);
-          if (v && typeof v === 'object') return Object.values(v).some(hasToken);
-          return false;
-        }
-        function hasCanary(v) {
-          if (typeof v === 'string') return CANARY_PATTERNS.some(p => p.test(v));
-          if (Array.isArray(v))      return v.some(hasCanary);
-          if (v && typeof v === 'object') return Object.values(v).some(hasCanary);
-          return false;
-        }
-        function makeFallback(msg, runUrl) {
-          return {
-            body:     `> [!WARNING]\n> **AI review could not be posted:** ${msg}\n>\n> See [workflow run](${runUrl}) for details.`,
-            event:    'COMMENT',
-            comments: [],
-          };
-        }
-        const VALID_EVENTS = ['COMMENT', 'REQUEST_CHANGES', 'APPROVE'];
-        function validateReview(review) {
-          const errors = [];
-          if (!review || typeof review !== 'object') {
-            errors.push('review must be a non-null object');
-            return { errors };
-          }
-          if (typeof review.body !== 'string')
-            errors.push('body must be a string');
-          if (!VALID_EVENTS.includes(review.event))
-            errors.push(`event must be one of ${VALID_EVENTS.join('|')}`);
-          if (!Array.isArray(review.comments)) {
-            errors.push('comments must be an array');
-          } else {
-            for (let i = 0; i < review.comments.length; i++) {
-              const c = review.comments[i];
-              if (!c || typeof c !== 'object') {
-                errors.push(`comments[${i}] must be an object`);
-              } else {
-                if (typeof c.path !== 'string')
-                  errors.push(`comments[${i}].path must be a string`);
-                if (typeof c.body !== 'string')
-                  errors.push(`comments[${i}].body must be a string`);
-                if (!Number.isInteger(c.line) || c.line < 1)
-                  errors.push(`comments[${i}].line must be a positive integer`);
-              }
-            }
-          }
-          return { errors };
-        }
-        module.exports = { hasToken, hasCanary, makeFallback, validateReview };
-        SCRIPT
+        cp _action/src/scan.js _prepare/scripts/scan.js
+        cp _action/src/guidelines.js _prepare/scripts/guidelines.js
         # Anchor Node.js module resolution here so it never walks up past
         # _prepare/scripts/ into the workspace root. Without this, claude-code-action
         # may leave a package.json at the workspace root that Node.js finds first
@@ -450,20 +423,26 @@ jobs:
     - name: Aggregate guidelines
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
       env:
-        PROMPT_FILES: ${{ inputs.prompt_file }}
-        REVIEW_EVENT: ${{ inputs.review_event }}
+        PROMPT_FILES:        ${{ inputs.prompt_file }}
+        PROMPT_FILE_PATTERN: ${{ inputs.prompt_file_pattern }}
+        REVIEW_EVENT:        ${{ inputs.review_event }}
       with:
         script: |
-          const fs   = require('node:fs');
-          const path = require('node:path');
+          const fs = require('node:fs');
+          const { buildGuidelines } =
+            require(`${process.env.GITHUB_WORKSPACE}/_prepare/scripts/guidelines`);
 
-          const promptFiles = process.env.PROMPT_FILES || '';
-          const reviewEvent = process.env.REVIEW_EVENT;
+          const promptFiles       = process.env.PROMPT_FILES || '';
+          const promptFilePattern = process.env.PROMPT_FILE_PATTERN || '';
+          const reviewEvent       = process.env.REVIEW_EVENT;
+
+          const usingPromptFiles = Boolean(promptFiles.trim());
+          const usingPattern     = Boolean(promptFilePattern.trim());
 
           fs.mkdirSync('_prepare', { recursive: true });
 
           // Read changed files from local git output (faster; no API pagination).
-          const changedFiles = promptFiles.trim()
+          const changedFiles = (usingPromptFiles || usingPattern)
             ? fs.readFileSync('_prepare/changed_files.txt', 'utf8').split('\n').filter(Boolean)
             : [];
 
@@ -513,49 +492,15 @@ jobs:
             'Only comment on lines that appear in the diff.',
           ].join('\n');
 
-          let guidelinesBody = '';
-          let included = 0;
+          const result = buildGuidelines({
+            promptFiles, promptFilePattern, changedFiles,
+            trustedDir: '__trusted', builtinGuidelines,
+          });
 
-          if (promptFiles.trim()) {
-            for (const entry of promptFiles.split('\n')) {
-              const pf = entry.trim();
-              if (!pf) continue;
+          for (const msg of result.info) core.info(msg);
+          if (result.error) { core.setFailed(result.error); return; }
 
-              const trustedPath = path.join('__trusted', pf);
-              const absoluteTrustedDir = path.resolve('__trusted');
-              const absolutePath      = path.resolve(trustedPath);
-              if (!absolutePath.startsWith(absoluteTrustedDir + path.sep)) {
-                core.setFailed(`Path traversal detected in prompt_file entry: '${pf}'`);
-                return;
-              }
-              if (!fs.existsSync(trustedPath)) {
-                core.setFailed(`prompt_file entry '${pf}' was not found on the default branch. Correct the path or remove the entry.`);
-                return;
-              }
-
-              // Root-level files always apply; subdirectory files apply only
-              // when at least one changed file shares that directory prefix.
-              const dir = path.dirname(pf);
-              const inScope = dir === '.' || changedFiles.some(f => f.startsWith(dir + '/') || f === dir);
-              if (!inScope) { core.info(`Out of scope for this PR: ${pf}`); continue; }
-
-              core.info(`Including: ${pf}`);
-              if (included > 0) guidelinesBody += '\n\n---\n';
-              guidelinesBody += fs.readFileSync(trustedPath, 'utf8').trimEnd();
-              included++;
-            }
-          }
-
-          if (included === 0) {
-            guidelinesBody = builtinGuidelines;
-            core.info(promptFiles.trim()
-              ? 'No prompt files matched this PR - using built-in default'
-              : 'prompt_file not set - using built-in default');
-          } else {
-            core.info(`Guidelines: ${included} file(s) included`);
-          }
-
-          fs.writeFileSync('_prepare/guidelines.md', guidelinesBody + '\n' + outputFormat);
+          fs.writeFileSync('_prepare/guidelines.md', result.guidelinesBody + '\n' + outputFormat);
 
     - name: Upload prepare artifacts
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

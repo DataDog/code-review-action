@@ -59,19 +59,26 @@ Add the API key for your chosen provider as a repository secret:
 |---|---|---|---|
 | `provider` | string | `claude` | AI provider: `claude`, `codex`, or `gemini`. |
 | `trigger_mode` | string | `always` | `always` runs on PR events; `on_demand` requires a `/dd-review` comment from a write-access collaborator. |
-| `prompt_file` | string | `""` | Newline-separated list of Markdown review guide paths (read from the default branch). Root-level files apply to all PRs; subdirectory files apply only when changed files share that prefix. Falls back to a built-in prompt when empty or no file matches. |
+| `prompt_file` | string | `""` | Newline-separated list of Markdown review guide paths (read from the default branch). Root-level files apply to all PRs; subdirectory files apply only when changed files share that prefix. Falls back to a built-in prompt when empty or no file matches. Mutually exclusive with `prompt_file_pattern`. |
+| `prompt_file_pattern` | string | `""` | Glob pattern (evaluated against the default branch) used to auto-discover review guide files instead of listing them, e.g. `**/codereview_guideline.md`. Every matched file follows the same scoping rule as `prompt_file`. Mutually exclusive with `prompt_file`. |
 
 ## Custom review guide
 
-Pass a newline-separated list of paths via `prompt_file`. Files are read from the **default branch** only — a PR cannot rewrite its own review instructions.
+Pass a newline-separated list of paths via `prompt_file`, or a single glob via `prompt_file_pattern` to auto-discover guide files instead of listing them explicitly. The two inputs are mutually exclusive — the workflow fails fast if both are set. Files are read from the **default branch** only — a PR cannot rewrite its own review instructions.
 
-**Scoping rule:** a file at the repo root applies to every PR; a file under a subdirectory (e.g. `bazel/guide.md`) applies only when at least one changed file lives under that directory.
+**Scoping rule:** a file at the repo root applies to every PR; a file under a subdirectory (e.g. `bazel/guide.md`) applies only when at least one changed file lives under that directory. This rule applies identically whether the file came from `prompt_file` or was discovered via `prompt_file_pattern`.
 
 ```yaml
 prompt_file: |
   guide.md          # applies to every PR
   bazel/guide.md    # applies only when bazel/ files changed
   pkg/auth/guide.md # applies only when pkg/auth/ files changed
+```
+
+Or, to have every directory's own guide picked up automatically (as used on `datadog-agent`):
+
+```yaml
+prompt_file_pattern: '**/codereview_guideline.md'
 ```
 
 Each file is plain Markdown. Example content:
@@ -87,6 +94,31 @@ Review as a senior Go engineer.
 ```
 
 The workflow appends a standardized output-format section automatically, so you do not need to describe the JSON shape in your guide files.
+
+## `find-guidelines` CLI
+
+The guideline discovery/scoping/aggregation logic that powers `prompt_file` and `prompt_file_pattern` inside the workflow (`src/guidelines.js`) is also exposed as a standalone, dependency-free CLI so other tooling — e.g. a local dev command in another repo — can reuse the exact same implementation instead of reimplementing it:
+
+```
+node bin/find-guidelines.js \
+  --repo-root /path/to/repo \
+  --pattern '**/codereview_guideline.md' \
+  --base main
+```
+
+Run `node bin/find-guidelines.js --help` for the full flag list (`--prompt-file` for an explicit list instead of `--pattern`, `--changed-files`/`--head` to control the diff, `--builtin`/`--builtin-file` for a fallback). It prints one JSON object to stdout:
+
+```json
+{
+  "error": null,
+  "included": 2,
+  "guidelines": [{ "path": "codereview_guideline.md", "content": "..." }],
+  "guidelinesBody": "...",
+  "info": ["..."]
+}
+```
+
+Exit code is `1` when `error` is set, `2` on a usage error, `0` otherwise. `bin/find-guidelines.js` is also declared as the `find-guidelines` package `bin` entry, so it can be invoked via `npx github:DataDog/code-review-action#<ref> find-guidelines ...` from a repo that doesn't vendor this one.
 
 ## Security model
 
