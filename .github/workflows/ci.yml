@@ -48,4 +48,11 @@ jobs:
         curl -sL "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz" \
           | tar xz -C /usr/local/bin actionlint
     - name: Run actionlint
-      run: actionlint .github/workflows/code-review.yml .github/workflows/ci.yml
+      # -ignore: actionlint doesn't yet know about the job.workflow_repository/
+      # job.workflow_sha context properties (shipped in actions/runner
+      # v2.334.0, still undocumented when rhysd/actionlint#647 was filed).
+      # Remove this once https://github.com/rhysd/actionlint/pull/696 ships.
+      run: |
+        actionlint \
+          -ignore 'property "workflow_(repository|sha)" is not defined' \
+          .github/workflows/code-review.yml .github/workflows/ci.yml

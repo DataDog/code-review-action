@@ -42,7 +42,7 @@ test('discoverPatternFiles - walks nested directories and returns posix-relative
     'team-a/codereview_guideline.md': 'a',
     'team-b/sub/codereview_guideline.md': 'b',
   });
-  const found = discoverPatternFiles(dir, '**/codereview_guideline.md').sort();
+  const found = discoverPatternFiles(dir, '**/codereview_guideline.md');
   assert.deepEqual(found, [
     'codereview_guideline.md',
     'team-a/codereview_guideline.md',
@@ -120,9 +120,26 @@ test('discoverPatternFiles - only returns files matching the glob, not everythin
     'team-a/codereview_guideline.md': 'a',
     'team-a/handler.go': 'package a',
   });
-  assert.deepEqual(discoverPatternFiles(dir, '**/codereview_guideline.md').sort(), [
+  assert.deepEqual(discoverPatternFiles(dir, '**/codereview_guideline.md'), [
     'codereview_guideline.md',
     'team-a/codereview_guideline.md',
+  ]);
+});
+
+test('discoverPatternFiles - result is sorted regardless of filesystem readdir order', () => {
+  // Create entries in reverse-alphabetical order so a naive implementation
+  // relying on fs.readdirSync order (not guaranteed sorted) would return
+  // them out of order. Found via dogfooding: a real /dd-review run on this
+  // repo caught this as a determinism bug before this test existed.
+  const dir = makeTrustedTree({
+    'team-b/codereview_guideline.md': 'b',
+    'team-a/codereview_guideline.md': 'a',
+    'codereview_guideline.md': 'root',
+  });
+  assert.deepEqual(discoverPatternFiles(dir, '**/codereview_guideline.md'), [
+    'codereview_guideline.md',
+    'team-a/codereview_guideline.md',
+    'team-b/codereview_guideline.md',
   ]);
 });
 

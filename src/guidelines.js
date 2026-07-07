@@ -46,7 +46,8 @@ function discoverPatternFiles(trustedDir, pattern) {
   const regex = globToRegExp(pattern);
   return walk(trustedDir)
     .map(f => path.relative(trustedDir, f).split(path.sep).join('/'))
-    .filter(rel => regex.test(rel));
+    .filter(rel => regex.test(rel))
+    .sort();
 }
 
 function isInScope(pf, changedFiles) {
