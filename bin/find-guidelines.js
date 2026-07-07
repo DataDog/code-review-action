@@ -9,8 +9,7 @@ const { buildGuidelines, mutualExclusivityError } = require('../src/guidelines.j
 const USAGE = `Usage: find-guidelines [options]
 
 Discovers review guideline files (by explicit list or glob pattern), scopes
-them to a set of changed files using the same directory-prefix rule as the
-code-review-action GitHub workflow, and aggregates their content. Intended
+them to a set of changed files, and aggregates their content. Intended
 to be called independently (e.g. from a local dev command in another repo)
 so that repo and the workflow share one implementation.
 

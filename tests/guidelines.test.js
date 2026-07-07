@@ -3,7 +3,10 @@ const assert = require('node:assert/strict');
 const fs     = require('node:fs');
 const os     = require('node:os');
 const path   = require('node:path');
-const { parseList, globToRegExp, discoverPatternFiles, isInScope, mutualExclusivityError, buildGuidelines } = require('../src/guidelines.js');
+const {
+  parseList, globToRegExp, discoverPatternFiles, discoverGuidelinesForChangedFiles,
+  isInScope, mutualExclusivityError, buildGuidelines,
+} = require('../src/guidelines.js');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -144,6 +147,102 @@ test('discoverPatternFiles - result is sorted regardless of filesystem readdir o
 });
 
 // ---------------------------------------------------------------------------
+// discoverGuidelinesForChangedFiles
+// ---------------------------------------------------------------------------
+
+test('discoverGuidelinesForChangedFiles - matches discoverPatternFiles + isInScope for the same inputs', () => {
+  const dir = makeTrustedTree({
+    'codereview_guideline.md': 'ROOT',
+    'team-a/codereview_guideline.md': 'TEAM A',
+    'team-b/sub/codereview_guideline.md': 'TEAM B SUB',
+  });
+  const changedFiles = ['team-a/handler.go'];
+
+  const viaFullWalk = discoverPatternFiles(dir, '**/codereview_guideline.md')
+    .filter(pf => isInScope(pf, changedFiles));
+  const viaWalkUp = discoverGuidelinesForChangedFiles(dir, '**/codereview_guideline.md', changedFiles);
+
+  assert.deepEqual(viaWalkUp, viaFullWalk);
+  assert.deepEqual(viaWalkUp, ['codereview_guideline.md', 'team-a/codereview_guideline.md']);
+});
+
+test('discoverGuidelinesForChangedFiles - root guideline always applies even with no changed files', () => {
+  const dir = makeTrustedTree({ 'codereview_guideline.md': 'ROOT' });
+  assert.deepEqual(discoverGuidelinesForChangedFiles(dir, '**/codereview_guideline.md', []), ['codereview_guideline.md']);
+});
+
+test('discoverGuidelinesForChangedFiles - walks up from a deeply nested changed file to the root', () => {
+  const dir = makeTrustedTree({
+    'codereview_guideline.md': 'ROOT',
+    'a/codereview_guideline.md': 'A',
+    'a/b/codereview_guideline.md': 'AB',
+    'a/b/c/codereview_guideline.md': 'ABC',
+  });
+  const found = discoverGuidelinesForChangedFiles(dir, '**/codereview_guideline.md', ['a/b/c/d/file.go']);
+  assert.deepEqual(found, [
+    'a/b/c/codereview_guideline.md',
+    'a/b/codereview_guideline.md',
+    'a/codereview_guideline.md',
+    'codereview_guideline.md',
+  ].sort());
+});
+
+test('discoverGuidelinesForChangedFiles - result is deduplicated and sorted when multiple changed files share ancestors', () => {
+  const dir = makeTrustedTree({
+    'codereview_guideline.md': 'ROOT',
+    'team-a/codereview_guideline.md': 'TEAM A',
+  });
+  const found = discoverGuidelinesForChangedFiles(dir, '**/codereview_guideline.md', [
+    'team-a/one.go', 'team-a/two.go', 'team-a/sub/three.go',
+  ]);
+  assert.deepEqual(found, ['codereview_guideline.md', 'team-a/codereview_guideline.md']);
+});
+
+test('discoverGuidelinesForChangedFiles - never lists a directory outside any changed file\'s ancestry (path cache bounds the walk)', () => {
+  const dir = makeTrustedTree({
+    'codereview_guideline.md': 'ROOT',
+    'team-a/codereview_guideline.md': 'TEAM A',
+    'unrelated-team/codereview_guideline.md': 'UNRELATED',
+  });
+  const listedDirs = [];
+  const realReaddirSync = fs.readdirSync;
+  fs.readdirSync = (p, opts) => {
+    listedDirs.push(path.relative(dir, p) || '.');
+    return realReaddirSync(p, opts);
+  };
+  try {
+    discoverGuidelinesForChangedFiles(dir, '**/codereview_guideline.md', ['team-a/handler.go']);
+  } finally {
+    fs.readdirSync = realReaddirSync;
+  }
+  assert.deepEqual(listedDirs.sort(), ['.', 'team-a']);
+  assert.ok(!listedDirs.includes('unrelated-team'), 'must not list a directory unrelated to any changed file');
+});
+
+test('discoverGuidelinesForChangedFiles - caches repeated ancestor directories (one listing per directory, not per changed file)', () => {
+  const dir = makeTrustedTree({
+    'team-a/codereview_guideline.md': 'TEAM A',
+    'team-a/sub/placeholder.txt': 'x',
+  });
+  let listCount = 0;
+  const realReaddirSync = fs.readdirSync;
+  fs.readdirSync = (p, opts) => {
+    listCount++;
+    return realReaddirSync(p, opts);
+  };
+  try {
+    discoverGuidelinesForChangedFiles(dir, '**/codereview_guideline.md', [
+      'team-a/one.go', 'team-a/two.go', 'team-a/three.go', 'team-a/sub/four.go',
+    ]);
+  } finally {
+    fs.readdirSync = realReaddirSync;
+  }
+  // Unique ancestor dirs visited across all 4 changed files: '.', 'team-a', 'team-a/sub' = 3.
+  // Without caching this would be re-listed once per changed file (up to 4x more calls).
+  assert.equal(listCount, 3);
+});
+
+// ---------------------------------------------------------------------------
 // isInScope
 // ---------------------------------------------------------------------------
 
@@ -250,7 +349,12 @@ test('buildGuidelines - prompt_file_pattern discovers and scopes files exactly l
   assert.equal(result.error, null);
   assert.equal(result.included, 2);
   assert.equal(result.guidelinesBody, 'ROOT\n\n---\nTEAM A');
-  assert.ok(result.info.some(m => m.includes('Out of scope for this PR: team-b/sub/codereview_guideline.md')));
+  // Scoping is now baked into discovery for prompt_file_pattern: an
+  // out-of-scope guideline is never discovered in the first place, so there
+  // is no separate "Out of scope" message (unlike the explicit prompt_file
+  // list, which does emit one - see the isInScope-based test above).
+  assert.ok(!result.guidelines.some(g => g.path === 'team-b/sub/codereview_guideline.md'));
+  assert.ok(!result.info.some(m => m.includes('team-b/sub/codereview_guideline.md')));
 });
 
 test('buildGuidelines - prompt_file_pattern with no matches falls back to built-in', () => {
@@ -264,7 +368,7 @@ test('buildGuidelines - prompt_file_pattern with no matches falls back to built-
   assert.ok(result.info.some(m => m.includes('No files matched prompt_file_pattern')));
 });
 
-test('buildGuidelines - prompt_file_pattern never fails when a discovered file scopes out; it is skipped, not fatal', () => {
+test('buildGuidelines - prompt_file_pattern: a guideline outside every changed file\'s ancestry is never discovered, not an error', () => {
   const dir = makeTrustedTree({ 'team-b/sub/codereview_guideline.md': 'TEAM B SUB' });
   const result = buildGuidelines({
     promptFiles: '', promptFilePattern: '**/codereview_guideline.md', changedFiles: ['unrelated/file.go'],

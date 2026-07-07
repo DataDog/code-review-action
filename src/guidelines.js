@@ -55,6 +55,47 @@ function isInScope(pf, changedFiles) {
   return dir === '.' || changedFiles.some(f => f.startsWith(dir + '/') || f === dir);
 }
 
+// Discovers guideline files applicable to changedFiles without walking the
+// whole tree: for each changed file, walks its own directory up to the repo
+// root, listing (and caching) only the directories actually visited. A
+// directory's listing is done at most once regardless of how many changed
+// files share it as an ancestor. This is O(changedFiles * depth) instead of
+// discoverPatternFiles' O(totalRepoFiles), which matters for a large
+// checkout with no prior sparse-checkout filtering (e.g. a local CLI run
+// against a full monorepo clone).
+function discoverGuidelinesForChangedFiles(trustedDir, pattern, changedFiles) {
+  const regex = globToRegExp(pattern);
+  const dirCache = new Map();
+
+  const guidelinesIn = (dir) => {
+    if (dirCache.has(dir)) return dirCache.get(dir);
+    const absDir = path.join(trustedDir, dir);
+    const matches = [];
+    if (fs.existsSync(absDir)) {
+      for (const entry of fs.readdirSync(absDir, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const rel = dir === '.' ? entry.name : `${dir}/${entry.name}`;
+        if (regex.test(rel)) matches.push(rel);
+      }
+    }
+    dirCache.set(dir, matches);
+    return matches;
+  };
+
+  const found = new Set(guidelinesIn('.'));
+
+  for (const file of changedFiles) {
+    let dir = path.dirname(file);
+    while (true) {
+      for (const m of guidelinesIn(dir)) found.add(m);
+      if (dir === '.') break;
+      dir = path.dirname(dir);
+    }
+  }
+
+  return Array.from(found).sort();
+}
+
 function mutualExclusivityError(promptFiles, promptFilePattern) {
   if ((promptFiles || '').trim() && (promptFilePattern || '').trim()) {
     return 'prompt_file and prompt_file_pattern are mutually exclusive - set only one.';
@@ -67,22 +108,20 @@ function buildGuidelines({ promptFiles, promptFilePattern, changedFiles, trusted
   const usingPattern     = Boolean((promptFilePattern || '').trim());
   const info = [];
 
-  let candidates = [];
-  if (usingPromptFiles) {
-    candidates = parseList(promptFiles);
-  } else if (usingPattern) {
-    candidates = discoverPatternFiles(trustedDir, promptFilePattern);
-    info.push(`prompt_file_pattern matched ${candidates.length} file(s): ${candidates.join(', ') || '(none)'}`);
-  }
-
   let guidelinesBody = '';
   let guidelines = [];
   let included = 0;
 
-  if (usingPromptFiles || usingPattern) {
-    for (const pf of candidates) {
-      if (!pf) continue;
+  const include = (pf, content) => {
+    info.push(`Including: ${pf}`);
+    if (included > 0) guidelinesBody += '\n\n---\n';
+    guidelinesBody += content;
+    guidelines.push({ path: pf, content });
+    included++;
+  };
 
+  if (usingPromptFiles) {
+    for (const pf of parseList(promptFiles)) {
       const trustedPath        = path.join(trustedDir, pf);
       const absoluteTrustedDir = path.resolve(trustedDir);
       const absolutePath       = path.resolve(trustedPath);
@@ -90,24 +129,23 @@ function buildGuidelines({ promptFiles, promptFilePattern, changedFiles, trusted
         return { error: `Path traversal detected in prompt file entry: '${pf}'`, info, guidelinesBody: '', guidelines: [], included: 0 };
       }
       if (!fs.existsSync(trustedPath)) {
-        if (usingPromptFiles) {
-          return {
-            error: `prompt_file entry '${pf}' was not found on the default branch. Correct the path or remove the entry.`,
-            info, guidelinesBody: '', guidelines: [], included: 0,
-          };
-        }
-        continue; // pattern-discovered entries always exist; defensive skip only
+        return {
+          error: `prompt_file entry '${pf}' was not found on the default branch. Correct the path or remove the entry.`,
+          info, guidelinesBody: '', guidelines: [], included: 0,
+        };
       }
 
-      const inScope = isInScope(pf, changedFiles);
-      if (!inScope) { info.push(`Out of scope for this PR: ${pf}`); continue; }
-
-      const content = fs.readFileSync(trustedPath, 'utf8').trimEnd();
-      info.push(`Including: ${pf}`);
-      if (included > 0) guidelinesBody += '\n\n---\n';
-      guidelinesBody += content;
-      guidelines.push({ path: pf, content });
-      included++;
+      if (!isInScope(pf, changedFiles)) { info.push(`Out of scope for this PR: ${pf}`); continue; }
+      include(pf, fs.readFileSync(trustedPath, 'utf8').trimEnd());
+    }
+  } else if (usingPattern) {
+    // Scoping is baked into discovery here (only ancestors of changedFiles
+    // are ever visited), so every match is already in scope - no separate
+    // filter step, and no existence check (found via directory listing).
+    const matches = discoverGuidelinesForChangedFiles(trustedDir, promptFilePattern, changedFiles);
+    info.push(`prompt_file_pattern matched ${matches.length} in-scope file(s): ${matches.join(', ') || '(none)'}`);
+    for (const pf of matches) {
+      include(pf, fs.readFileSync(path.join(trustedDir, pf), 'utf8').trimEnd());
     }
   }
 
@@ -127,4 +165,7 @@ function buildGuidelines({ promptFiles, promptFilePattern, changedFiles, trusted
   return { error: null, info, guidelinesBody, guidelines, included };
 }
 
-module.exports = { parseList, globToRegExp, discoverPatternFiles, isInScope, mutualExclusivityError, buildGuidelines };
+module.exports = {
+  parseList, globToRegExp, discoverPatternFiles, discoverGuidelinesForChangedFiles,
+  isInScope, mutualExclusivityError, buildGuidelines,
+};
