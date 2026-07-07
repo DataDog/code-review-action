@@ -15,7 +15,7 @@ jobs:
             provider: claude
             trigger_mode: on_demand
             review_event: COMMENT_ONLY
-            prompt_file: prompt.md
+            prompt_file_pattern: '**/codereview_guideline.md'
         secrets:
             openai_api_key: ${{ secrets.OPENAI_API_KEY }}
             anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
