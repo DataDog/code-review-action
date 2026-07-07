@@ -10,9 +10,9 @@ jobs:
             contents: read
             pull-requests: write
             checks: write
-        uses: DataDog/code-review-action/.github/workflows/code-review.yml@feat/ai-code-review-action
+        uses: DataDog/code-review-action/.github/workflows/code-review.yml@feat/prompt-file-pattern
         with:
-            provider: gemini
+            provider: claude
             trigger_mode: on_demand
             review_event: COMMENT_ONLY
             prompt_file: prompt.md
