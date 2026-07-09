@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { hasToken, hasCanary, makeFallback, validateReview } = require('../src/scan.js');
+const { hasToken, hasCanary, makeFallback, validateReview, extractJson } = require('../src/scan.js');
 
 // ---------------------------------------------------------------------------
 // hasToken
@@ -204,4 +204,43 @@ test('validateReview - comment line must be positive integer', () => {
   assert.ok(validateReview({ body: '', event: 'COMMENT', comments: [{ ...base, line: -1 }] }).errors.length > 0);
   assert.ok(validateReview({ body: '', event: 'COMMENT', comments: [{ ...base, line: 1.5 }] }).errors.length > 0);
   assert.equal(validateReview({ body: '', event: 'COMMENT', comments: [{ ...base, line: 1 }] }).errors.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// extractJson
+// ---------------------------------------------------------------------------
+test('extractJson - bare JSON round-trips correctly', () => {
+  const json = '{"body":"LGTM","event":"COMMENT","comments":[]}';
+  assert.equal(extractJson(json), json);
+});
+
+test('extractJson - strips markdown code fence', () => {
+  const json = '{"body":"ok","event":"COMMENT","comments":[]}';
+  const fenced = '```json\n' + json + '\n```';
+  assert.equal(extractJson(fenced), json);
+});
+
+test('extractJson - skips stray brace pair in prose before JSON', () => {
+  const json = '{"body":"ok","event":"COMMENT","comments":[]}';
+  const prose = 'Consider using the Foo{} pattern.\n\n' + json;
+  assert.equal(extractJson(prose), json);
+});
+
+test('extractJson - skips multiple stray brace pairs in prose', () => {
+  const json = '{"body":"ok","event":"COMMENT","comments":[]}';
+  const prose = 'Use {} for empty objects and {key: val} for maps.\n\n' + json;
+  assert.equal(extractJson(prose), json);
+});
+
+test('extractJson - returns null when no braces present', () => {
+  assert.equal(extractJson('no braces here'), null);
+});
+
+test('extractJson - returns null for empty string', () => {
+  assert.equal(extractJson(''), null);
+});
+
+test('extractJson - handles JSON with brace pairs inside string values', () => {
+  const json = '{"body":"use {} syntax","event":"COMMENT","comments":[]}';
+  assert.equal(extractJson(json), json);
 });
