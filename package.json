@@ -8,7 +8,7 @@
     "test": "nyc mocha 'tests/**/*.test.js'"
   },
   "devDependencies": {
-    "dd-trace": "^5.110.0",
+    "dd-trace": "^6.0.0",
     "mocha": "^11.0.0",
     "nyc": "^18.0.0"
   },
