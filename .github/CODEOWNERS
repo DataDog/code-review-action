@@ -1,2 +1,10 @@
 
 *    @DataDog/agent-devx
+
+# Security boundary for the reusable AI review workflow.
+/.github/CODEOWNERS @DataDog/sdlc-security
+/.github/workflows/ @DataDog/sdlc-security
+/src/scan.js @DataDog/sdlc-security
+/src/guidelines.js @DataDog/sdlc-security
+/src/claude.js @DataDog/sdlc-security
+/schemas/github-review.json @DataDog/sdlc-security

@@ -24,53 +24,86 @@ const CANARY_PATTERNS = [
   />>?\s*\$GITHUB_OUTPUT/,
   />>?\s*\$GITHUB_ENV/,
 ];
-function hasToken(v) {
-  if (typeof v === 'string') return TOKEN_PATTERNS.some(p => p.test(v));
-  if (Array.isArray(v))      return v.some(hasToken);
-  if (v && typeof v === 'object') return Object.values(v).some(hasToken);
+
+const VALID_EVENTS = new Set(['COMMENT', 'REQUEST_CHANGES', 'APPROVE']);
+const REVIEW_FIELDS = new Set(['body', 'event', 'comments']);
+const COMMENT_FIELDS = new Set(['path', 'body', 'line', 'side']);
+const FALLBACK_MARKER = '<!-- ai-review-status:suppressed -->';
+
+function matchesTree(value, patterns) {
+  if (typeof value === 'string') return patterns.some(pattern => pattern.test(value));
+  if (Array.isArray(value)) return value.some(item => matchesTree(item, patterns));
+  if (value && typeof value === 'object') {
+    return Object.values(value).some(item => matchesTree(item, patterns));
+  }
   return false;
 }
-function hasCanary(v) {
-  if (typeof v === 'string') return CANARY_PATTERNS.some(p => p.test(v));
-  if (Array.isArray(v))      return v.some(hasCanary);
-  if (v && typeof v === 'object') return Object.values(v).some(hasCanary);
-  return false;
+
+function hasToken(value) {
+  return matchesTree(value, TOKEN_PATTERNS);
 }
+
+function hasCanary(value) {
+  return matchesTree(value, CANARY_PATTERNS);
+}
+
 function makeFallback(msg, runUrl) {
   return {
-    body:     `> [!WARNING]\n> **AI review could not be posted:** ${msg}\n>\n> See [workflow run](${runUrl}) for details.`,
+    body:     `${FALLBACK_MARKER}\n> [!WARNING]\n> **AI review could not be posted:** ${msg}\n>\n> See [workflow run](${runUrl}) for details.`,
     event:    'COMMENT',
     comments: [],
   };
 }
-const VALID_EVENTS = ['COMMENT', 'REQUEST_CHANGES', 'APPROVE'];
+
+function isFallback(review) {
+  return typeof review?.body === 'string' && review.body.startsWith(`${FALLBACK_MARKER}\n`);
+}
+
+function rejectUnknownFields(value, allowedFields, location, errors) {
+  for (const field of Object.keys(value)) {
+    if (!allowedFields.has(field)) errors.push(`${location}.${field} is not allowed`);
+  }
+}
+
 function validateReview(review) {
   const errors = [];
-  if (!review || typeof review !== 'object') {
-    errors.push('review must be a non-null object');
-    return { errors };
+  if (!review || typeof review !== 'object' || Array.isArray(review)) {
+    return { errors: ['review must be a non-null object'] };
   }
+
+  rejectUnknownFields(review, REVIEW_FIELDS, 'review', errors);
   if (typeof review.body !== 'string')
     errors.push('body must be a string');
-  if (!VALID_EVENTS.includes(review.event))
-    errors.push(`event must be one of ${VALID_EVENTS.join('|')}`);
+  if (!VALID_EVENTS.has(review.event))
+    errors.push('event must be one of COMMENT|REQUEST_CHANGES|APPROVE');
+
   if (!Array.isArray(review.comments)) {
     errors.push('comments must be an array');
-  } else {
-    for (let i = 0; i < review.comments.length; i++) {
-      const c = review.comments[i];
-      if (!c || typeof c !== 'object') {
-        errors.push(`comments[${i}] must be an object`);
-      } else {
-        if (typeof c.path !== 'string')
-          errors.push(`comments[${i}].path must be a string`);
-        if (typeof c.body !== 'string')
-          errors.push(`comments[${i}].body must be a string`);
-        if (!Number.isInteger(c.line) || c.line < 1)
-          errors.push(`comments[${i}].line must be a positive integer`);
-      }
-    }
+    return { errors };
   }
+  if (review.comments.length > 100)
+    errors.push('comments must contain at most 100 entries');
+
+  for (let i = 0; i < review.comments.length; i++) {
+    const comment = review.comments[i];
+    const location = `comments[${i}]`;
+    if (!comment || typeof comment !== 'object' || Array.isArray(comment)) {
+      errors.push(`${location} must be an object`);
+      continue;
+    }
+
+    rejectUnknownFields(comment, COMMENT_FIELDS, location, errors);
+    if (typeof comment.path !== 'string' || comment.path.length === 0)
+      errors.push(`${location}.path must be a non-empty string`);
+    if (typeof comment.body !== 'string')
+      errors.push(`${location}.body must be a string`);
+    if (!Number.isInteger(comment.line) || comment.line < 1)
+      errors.push(`${location}.line must be a positive integer`);
+    if (comment.side !== 'LEFT' && comment.side !== 'RIGHT')
+      errors.push(`${location}.side must be LEFT or RIGHT`);
+  }
+
   return { errors };
 }
-module.exports = { hasToken, hasCanary, makeFallback, validateReview };
+
+module.exports = { hasToken, hasCanary, makeFallback, isFallback, validateReview };
