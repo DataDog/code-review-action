@@ -7,7 +7,6 @@ const WORKFLOW       = path.join(__dirname, '../.github/workflows/code-review.ym
 const SCAN_SRC       = path.join(__dirname, '../src/scan.js');
 const GUIDELINES_SRC = path.join(__dirname, '../src/guidelines.js');
 const REVIEW_SCHEMA  = path.join(__dirname, '../schemas/github-review.json');
-const CODEOWNERS     = path.join(__dirname, '../.github/CODEOWNERS');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -159,21 +158,6 @@ test('src/scan.js and src/guidelines.js are the files the self-checkout stages (
   require(GUIDELINES_SRC);
 });
 
-test('the workflow security boundary requires sdlc-security ownership', () => {
-  const owners = fs.readFileSync(CODEOWNERS, 'utf8');
-  assert.match(owners, /^\*\s+@DataDog\/agent-devx$/m);
-  for (const protectedPath of [
-    '/.github/CODEOWNERS',
-    '/.github/workflows/',
-    '/src/scan.js',
-    '/src/guidelines.js',
-    '/src/claude.js',
-    '/schemas/github-review.json',
-  ]) {
-    assert.match(owners, new RegExp(`^${protectedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} @DataDog/sdlc-security$`, 'm'));
-  }
-});
-
 // ---------------------------------------------------------------------------
 // prompt_file / prompt_file_pattern input definitions
 // ---------------------------------------------------------------------------
@@ -296,7 +280,7 @@ test('trusted checkouts use the default-branch commit pinned by gate', () => {
   assert.match(yaml, /github\.rest\.git\.getRef/);
   assert.equal(
     (yaml.match(/ref:\s*\$\{\{ needs\.gate\.outputs\.trusted_sha \}\}/g) || []).length,
-    1
+    2
   );
 });
 
@@ -320,20 +304,30 @@ test('provider runtimes are pinned and bounded', () => {
   assert.equal((yaml.match(/timeout-minutes:\s*30/g) || []).length, 3);
 });
 
-test('Claude uses a pinned direct API client with no local model tools or remote installer', () => {
+test('Claude uses the pinned official action with fail-closed structured output', () => {
   const yaml = readWorkflow();
   const start = yaml.indexOf('\n  review_claude:');
   const end = yaml.indexOf('\n  # -- REVIEW (Codex)', start);
   const claude = yaml.slice(start, end);
 
-  assert.match(claude, /repository:\s*\$\{\{ job\.workflow_repository \}\}/);
-  assert.match(claude, /ref:\s*\$\{\{ job\.workflow_sha \}\}/);
-  assert.match(claude, /run:\s*node _action\/src\/claude\.js/);
-  assert.match(claude, /ANTHROPIC_API_KEY:\s*\$\{\{ secrets\.anthropic_api_key \}\}/);
-  assert.ok(!claude.includes('anthropics/claude-code-action'));
-  assert.ok(!claude.includes('github_token:'));
-  assert.ok(!claude.includes('--allowedTools'));
-  assert.ok(!claude.includes('curl '));
+  assert.match(claude, /anthropics\/claude-code-action@6c0083bb7289c31716797a039b6367b3079cc46e/);
+  assert.match(claude, /CLAUDE_CODE_SUBPROCESS_ENV_SCRUB:\s*"1"/);
+  assert.match(claude, /allowed_non_write_users:\s*"__force_sandbox_dummy__"/);
+  assert.match(claude, /--tools "Read,Glob,Grep"/);
+  assert.match(claude, /--allowedTools "Read,Glob,Grep"/);
+  assert.match(claude, /--permission-mode dontAsk/);
+  assert.match(claude, /--disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit"/);
+  assert.match(claude, /--setting-sources user/);
+  assert.match(claude, /--max-turns 10/);
+  assert.match(claude, /--json-schema/);
+  assert.match(claude, /toJSON\(steps\.claude\.outputs\.structured_output\)/);
+  assert.match(claude, /validateReview\(review\)/);
+  assert.ok(!claude.includes('STRUCTURED_OUTPUT:'));
+  assert.ok(!claude.includes('execution_file'));
+  assert.ok(!claude.includes('src/claude.js'));
+  assert.ok(!claude.includes("candidate.indexOf('{')"));
+  assert.ok(!claude.includes('trigger_phrase:'));
+  assert.ok(!claude.includes('track_progress:'));
 });
 
 test('prepare generates a complete pinned local diff and rejects oversized input', () => {
@@ -348,10 +342,12 @@ test('prepare generates a complete pinned local diff and rejects oversized input
 
 test('repository-reading providers use the base pull ref and verify the pinned head', () => {
   const yaml = readWorkflow();
+  const claudeStart = yaml.indexOf('\n  review_claude:');
   const codexStart = yaml.indexOf('\n  review_codex:');
   const geminiStart = yaml.indexOf('\n  review_gemini:');
   const postStart = yaml.indexOf('\n  post:');
   const sections = [
+    yaml.slice(claudeStart, codexStart),
     yaml.slice(codexStart, geminiStart),
     yaml.slice(geminiStart, postStart),
   ];

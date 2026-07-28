@@ -6,7 +6,7 @@ A reusable GitHub Actions workflow that runs an AI model as a read-only code rev
 
 | Input value | Action used | Secret required |
 |---|---|---|
-| `claude` (default) | [Anthropic Messages API](https://platform.claude.com/docs/en/api/messages/create), model `claude-sonnet-4-6` | `anthropic_api_key` |
+| `claude` (default) | [anthropics/claude-code-action](https://github.com/anthropics/claude-code-action) | `anthropic_api_key` |
 | `codex` | [openai/codex-action](https://github.com/openai/codex-action) with Codex CLI `0.144.5` | `openai_api_key` |
 | `gemini` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) `0.47.0` | `gemini_api_key` |
 
@@ -141,7 +141,7 @@ gate  ──►  start_signal + prepare  ──►  review_{provider}  ──►
 
 ### Trust boundaries
 
-- Claude receives only the prepared diff and trusted guidelines through a fixed Messages API client; it has no local tools or PR checkout. Gemini checks the PR head out under `__untrusted/`; Codex uses the workspace root because its action expects a repository there. Their provider-specific instruction/config files are removed before model execution, and Codex clears PR-controlled artifact/output paths before downloading trusted inputs.
+- Claude and Gemini check the PR head out under `__untrusted/`; Codex uses the workspace root because its action expects a repository there. Claude is limited to `Read`, `Glob`, and `Grep`; Gemini and Codex have their provider-specific instruction/config files removed before model execution, and Codex clears PR-controlled artifact/output paths before downloading trusted inputs.
 - `_prepare/untrusted/` contains the complete local PR diff and API-derived changed-file list for the SHAs pinned by `gate`. The workflow verifies the pull ref and API state during preparation, then checks the head again immediately before submission; it fails if the PR moved or closed.
 - `_prepare/trusted/` contains the assembled review guide, common schema, and validator. The schema and validator are checked out from `job.workflow_sha`, the exact reusable-workflow revision. Review guides are read from the calling repository's default-branch commit pinned by `gate`.
 - `post` treats every downloaded artifact as data: it checks out its validator independently at `job.workflow_sha`, downloads model output into an isolated directory, accepts only a bounded regular `review.json` file, and never executes artifact content.
@@ -166,12 +166,11 @@ AI output is checked for shell commands (`curl`, `wget`, `bash`, etc.) and attem
 
 ### Additional hardening
 
-- `.github/CODEOWNERS` assigns the workflow, trusted runtime scripts, and review schema to `@DataDog/sdlc-security`; repositories should enable required Code Owner review so this ownership is enforced.
 - `persist-credentials: false` on all checkouts — leaves no token in `.git/config`.
 - Fork PRs are skipped in `always` mode to prevent API key exposure.
 - In `on_demand` mode, the commenter's permission is checked via the `collaborators/.../permission` API (repo-scoped, not the org-wide `author_association` which would over-grant).
-- Claude is called directly through a pinned local API client and fixed `claude-sonnet-4-6` model ID. There is no remote CLI installer, local agent loop, PR filesystem access, shell, MCP, or other model-callable tool.
-- Claude must call one strict-schema `submit_review` tool. The client validates and scans that object before artifact upload; no transcript or execution log is searched as a fallback.
+- The Claude action is SHA-pinned and runs in agent mode with only `Read`, `Glob`, and `Grep`; shell and write tools are explicitly denied. Project/local settings are disabled, execution is capped at 10 turns, and its subprocess isolation path provides best-effort credential scrubbing with bubblewrap where supported.
+- Claude uses the action's schema-backed `structured_output`. The workflow validates and scans that exact value before artifact upload; it never searches the execution transcript or repairs malformed output.
 - The Codex action and CLI are both pinned; Codex runs with the `:read-only` permission profile and `drop-sudo`. `AGENTS.md`, `AGENTS.override.md`, and other AI instruction files are removed at every directory depth before execution. Before the action's pre-sandbox CLI installation, PR-controlled `.npmrc` files are removed, npm user configuration is disabled, the public npm registry is selected explicitly, and lifecycle scripts are disabled.
 - Gemini CLI is pinned to `0.47.0`, verified against a fixed SHA-512, and installed without lifecycle scripts or optional keychain/PTY dependencies. It runs in its digest-pinned matching Docker sandbox with an isolated home directory and receives only the Gemini API key plus minimal runtime environment; the GitHub token and Actions command-file paths are not inherited.
 - Gemini extensions and MCP are disabled. Its only tools are `read_file`, `glob`, `grep_search`, and `list_directory`; repository `GEMINI.md` and `.gemini` content is removed at every depth before workspace trust is enabled.
@@ -186,13 +185,13 @@ AI output is checked for shell commands (`curl`, `wget`, `bash`, etc.) and attem
 
 - [`schemas/github-review.json`](schemas/github-review.json) — the single JSON schema for every provider and the GitHub review payload.
 - [`src/scan.js`](src/scan.js) — the shared fail-closed validator and output scanner used in provider jobs and again before posting.
-- [`src/claude.js`](src/claude.js) — the dependency-free Messages API client that gives Claude only the prepared diff and strict review schema.
 
 ## Limitations
 
 - Fork PRs are not reviewed in `always` mode (provider API keys would be exposed to untrusted code). Use `on_demand` if you want to review fork PRs selectively.
 - Datadog's strict security pattern assumes `review_event: COMMENT_ONLY`. Selecting `ALL` deliberately relaxes that boundary for same-repository PRs and lets prompt-influenced model output approve or request changes; only enable it where merge policy explicitly permits AI-authored review decisions.
-- Claude reviews the complete prepared diff but has no local repository tools, so it cannot inspect unchanged surrounding files. This is an intentional boundary that keeps the Anthropic key outside a prompt-injected agent process.
+- Claude's read-only tools can inspect unchanged files for review context. Their filesystem access is broader than the prepared diff, so the PR checkout and all model output remain untrusted.
+- The pinned Claude action installs its fixed CLI version through Anthropic's mutable installer endpoint at runtime; the action SHA does not pin that installer response.
 - The `gemini` provider uses `--approval-mode yolo` only after reducing the tool registry to four read-only tools. It has no shell, write, MCP, or extension tool to auto-approve.
 - Gemini's sandboxed CLI process needs network access to call the Gemini API. The workflow provides no model-callable network tool, but it does not enforce destination-level egress filtering on that API connection.
 - GitHub's pull-request files API returns at most 3,000 files. The workflow detects an incomplete list and fails preparation rather than applying review-guide scope to partial data.
