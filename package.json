@@ -18,7 +18,12 @@
     "timeout": 10000
   },
   "nyc": {
-    "include": ["src/**/*.js"],
-    "reporter": ["text", "lcov"]
+    "include": [
+      "src/**/*.js"
+    ],
+    "reporter": [
+      "text",
+      "lcov"
+    ]
   }
 }
