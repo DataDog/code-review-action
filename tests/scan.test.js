@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { hasToken, hasCanary, makeFallback, validateReview } = require('../src/scan.js');
+const { hasToken, hasCanary, makeFallback, isFallback, validateReview } = require('../src/scan.js');
 
 // ---------------------------------------------------------------------------
 // hasToken
@@ -126,6 +126,10 @@ test('makeFallback - produces valid review shape', () => {
   assert.deepEqual(result.comments, []);
   assert.ok(result.body.includes('something went wrong'));
   assert.ok(result.body.includes('https://example.com/run/1'));
+  assert.equal(isFallback(result), true);
+  assert.equal(isFallback({ body: '> [!WARNING]\nA legitimate warning' }), false);
+  assert.equal(isFallback(null), false);
+  assert.deepEqual(validateReview(result), { errors: [] });
 });
 
 // ---------------------------------------------------------------------------
@@ -157,7 +161,7 @@ test('validateReview - valid review with inline comments', () => {
   const { errors } = validateReview({
     body: 'See inline',
     event: 'REQUEST_CHANGES',
-    comments: [{ path: 'foo.js', body: 'fix this', line: 10 }],
+    comments: [{ path: 'foo.js', body: 'fix this', line: 10, side: 'RIGHT' }],
   });
   assert.equal(errors.length, 0);
 });
@@ -199,9 +203,51 @@ test('validateReview - comment missing required fields', () => {
 });
 
 test('validateReview - comment line must be positive integer', () => {
-  const base = { path: 'f.js', body: 'x' };
+  const base = { path: 'f.js', body: 'x', side: 'RIGHT' };
   assert.ok(validateReview({ body: '', event: 'COMMENT', comments: [{ ...base, line: 0 }] }).errors.length > 0);
   assert.ok(validateReview({ body: '', event: 'COMMENT', comments: [{ ...base, line: -1 }] }).errors.length > 0);
   assert.ok(validateReview({ body: '', event: 'COMMENT', comments: [{ ...base, line: 1.5 }] }).errors.length > 0);
   assert.equal(validateReview({ body: '', event: 'COMMENT', comments: [{ ...base, line: 1 }] }).errors.length, 0);
+});
+
+test('validateReview - rejects arrays and unknown fields', () => {
+  assert.ok(validateReview([]).errors.length > 0);
+
+  const { errors } = validateReview({
+    body: '',
+    event: 'COMMENT',
+    comments: [{
+      path: 'f.js', body: 'x', line: 1, side: 'RIGHT', start_line: 1,
+    }],
+    extra: true,
+  });
+  assert.ok(errors.includes('review.extra is not allowed'));
+  assert.ok(errors.includes('comments[0].start_line is not allowed'));
+});
+
+test('validateReview - requires side and enforces the comment limit', () => {
+  const missingSide = validateReview({
+    body: '', event: 'COMMENT', comments: [{ path: 'f.js', body: 'x', line: 1 }],
+  });
+  assert.ok(missingSide.errors.includes('comments[0].side must be LEFT or RIGHT'));
+
+  const comment = { path: 'f.js', body: 'x', line: 1, side: 'RIGHT' };
+  const tooMany = validateReview({
+    body: '', event: 'COMMENT', comments: Array.from({ length: 101 }, () => ({ ...comment })),
+  });
+  assert.ok(tooMany.errors.includes('comments must contain at most 100 entries'));
+});
+
+test('github-review schema matches the strict single-line runtime contract', () => {
+  const schema = require('../schemas/github-review.json');
+  const comments = schema.properties.comments;
+  const item = comments.items;
+
+  assert.deepEqual(schema.required, ['body', 'event', 'comments']);
+  assert.equal(schema.additionalProperties, false);
+  assert.equal(comments.maxItems, 100);
+  assert.deepEqual(item.required, ['path', 'body', 'line', 'side']);
+  assert.equal(item.additionalProperties, false);
+  assert.deepEqual(Object.keys(item.properties).sort(), ['body', 'line', 'path', 'side']);
+  assert.equal(item.properties.path.minLength, 1);
 });
