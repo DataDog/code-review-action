@@ -610,7 +610,7 @@ jobs:
       with:
         script: |
           const fs = require('node:fs');
-          const { hasToken, hasCanary, makeFallback } =
+          const { hasToken, hasCanary, makeFallback, extractJson } =
             require(`${process.env.GITHUB_WORKSPACE}/_prepare/scripts/scan`);
 
           const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
@@ -653,13 +653,8 @@ jobs:
             return;
           }
 
-          // Tolerate preamble/postamble or ```json fences — slice from first { to last }.
-          let candidate = last.trim();
-          const firstBrace = candidate.indexOf('{');
-          const lastBrace  = candidate.lastIndexOf('}');
-          if (firstBrace !== -1 && lastBrace > firstBrace) {
-            candidate = candidate.slice(firstBrace, lastBrace + 1);
-          }
+          // Tolerate preamble/postamble or ```json fences.
+          let candidate = extractJson(last.trim()) ?? last.trim();
 
           let review;
           try { review = JSON.parse(candidate); }
@@ -963,7 +958,7 @@ jobs:
         script: |
           const fs   = require('node:fs');
           const path = require('node:path');
-          const { hasToken, hasCanary, makeFallback } =
+          const { hasToken, hasCanary, makeFallback, extractJson } =
             require(path.join(process.env.GITHUB_WORKSPACE, '_prepare/scripts/scan'));
 
           const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
@@ -978,11 +973,10 @@ jobs:
           let review = null;
           try { const obj = JSON.parse(raw); if (obj.body !== undefined) review = obj; } catch {}
           if (!review) {
-            const start = raw.indexOf('{');
-            const end   = raw.lastIndexOf('}');
-            if (start !== -1 && end !== -1) {
+            const extracted = extractJson(raw);
+            if (extracted) {
               try {
-                const obj = JSON.parse(raw.slice(start, end + 1));
+                const obj = JSON.parse(extracted);
                 if (obj.body !== undefined && Array.isArray(obj.comments)) review = obj;
               } catch {}
             }

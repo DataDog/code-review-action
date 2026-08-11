@@ -73,4 +73,16 @@ function validateReview(review) {
   }
   return { errors };
 }
-module.exports = { hasToken, hasCanary, makeFallback, validateReview };
+// Scan backward from the last } to find its depth-matching { so that stray
+// brace pairs in prose before the JSON block (e.g. `Foo{}`) are skipped.
+function extractJson(text) {
+  const lastBrace = text.lastIndexOf('}');
+  if (lastBrace === -1) return null;
+  let depth = 0;
+  for (let i = lastBrace; i >= 0; i--) {
+    if (text[i] === '}') depth++;
+    else if (text[i] === '{' && --depth === 0) return text.slice(i, lastBrace + 1);
+  }
+  return null;
+}
+module.exports = { hasToken, hasCanary, makeFallback, validateReview, extractJson };
