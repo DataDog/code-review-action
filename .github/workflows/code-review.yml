@@ -362,14 +362,14 @@ jobs:
       pull-requests: read
     steps:
     - name: Checkout calling repo (for local diff generation)
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
         persist-credentials: false
 
     - name: Checkout prompt files from default branch (sparse)
       if: inputs.prompt_file != '' || inputs.prompt_file_pattern != ''
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ github.event.repository.default_branch }}
         path: __trusted
@@ -397,7 +397,7 @@ jobs:
       # repo+commit (not the caller's) even when called cross-repo, so this is
       # guaranteed to match the exact ref the caller pinned in 'uses:' -
       # letting scan.js/guidelines.js be required directly instead of inlined.
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: ${{ job.workflow_repository }}
         ref: ${{ job.workflow_sha }}
@@ -543,7 +543,7 @@ jobs:
       # is the minimum anchor that is always present and keeps the clone tiny.
       # This step must run BEFORE artifact downloads: actions/checkout cleans the
       # workspace by default, which would delete any previously downloaded files.
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ github.event.repository.default_branch }}
         persist-credentials: false
@@ -553,7 +553,7 @@ jobs:
         sparse-checkout-cone-mode: false
 
     - name: Checkout PR head into __untrusted/
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ needs.gate.outputs.head_sha }}
         path: __untrusted
@@ -722,7 +722,7 @@ jobs:
       pull-requests: read
     steps:
     - name: Checkout PR head
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ needs.gate.outputs.head_sha }}
         persist-credentials: false
@@ -880,7 +880,7 @@ jobs:
         path: _prepare
 
     - name: Checkout PR head into __untrusted/
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ needs.gate.outputs.head_sha }}
         path: __untrusted
