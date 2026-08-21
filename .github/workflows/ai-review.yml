@@ -10,11 +10,11 @@ jobs:
             contents: read
             pull-requests: write
             checks: write
-        uses: DataDog/code-review-action/.github/workflows/code-review.yml@nicolas.schweitzer/add-description
+        uses: DataDog/code-review-action/.github/workflows/code-review.yml@main
         with:
             provider: claude
             trigger_mode: on_demand
-            review_event: ALL
+            review_event: COMMENT_ONLY
             prompt_file_pattern: '**/codereview_guideline.md'
         secrets:
             openai_api_key: ${{ secrets.OPENAI_API_KEY }}
