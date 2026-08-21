@@ -10,7 +10,7 @@ jobs:
             contents: read
             pull-requests: write
             checks: write
-        uses: DataDog/code-review-action/.github/workflows/code-review.yml@main
+        uses: DataDog/code-review-action/.github/workflows/code-review.yml@nicolas.schweitzer/add-description
         with:
             provider: claude
             trigger_mode: on_demand
