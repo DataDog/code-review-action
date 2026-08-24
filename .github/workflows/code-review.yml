@@ -694,7 +694,7 @@ jobs:
       with:
         script: |
           const fs = require('node:fs');
-          const { hasToken, hasCanary, makeFallback, extractJson } =
+          const { findToken, findCanary, makeFallback, extractJson } =
             require(`${process.env.GITHUB_WORKSPACE}/_prepare/scripts/scan`);
 
           const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
@@ -747,14 +747,16 @@ jobs:
             return;
           }
 
-          if (hasToken(review)) {
-            core.warning('Secret pattern detected in review output - suppressing review');
-            write(makeFallback('secret pattern detected in AI output - review suppressed for security', runUrl));
+          const tokenMatch = findToken(review);
+          if (tokenMatch) {
+            core.warning(`Secret pattern detected in review output (${tokenMatch}) - suppressing review`);
+            write(makeFallback(`secret pattern detected in AI output (category: ${tokenMatch}) - review suppressed for security`, runUrl));
             return;
           }
-          if (hasCanary(review)) {
-            core.warning('Prompt-injection canary triggered in review output - suppressing review');
-            write(makeFallback('anomalous output detected - review suppressed for security', runUrl));
+          const canaryMatch = findCanary(review);
+          if (canaryMatch) {
+            core.warning(`Prompt-injection canary triggered in review output (${canaryMatch}) - suppressing review`);
+            write(makeFallback(`anomalous output detected (category: ${canaryMatch}) - review suppressed for security`, runUrl));
             return;
           }
 
@@ -911,7 +913,7 @@ jobs:
         script: |
           const fs   = require('node:fs');
           const path = require('node:path');
-          const { hasToken, hasCanary, makeFallback } =
+          const { findToken, findCanary, makeFallback } =
             require(path.join(process.env.GITHUB_WORKSPACE, '_prepare/scripts/scan'));
 
           const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
@@ -927,9 +929,10 @@ jobs:
           try { review = JSON.parse(fs.readFileSync('codex-output.json', 'utf8')); }
           catch (e) { write(makeFallback(`could not parse Codex output: ${e.message}`, runUrl)); return; }
 
-          if (hasToken(review) || hasCanary(review)) {
-            core.warning('Secret or injection pattern detected in Codex output - suppressing');
-            write(makeFallback('anomalous content in AI output - review suppressed for security', runUrl));
+          const codexMatch = findToken(review) || findCanary(review);
+          if (codexMatch) {
+            core.warning(`Secret or injection pattern detected in Codex output (${codexMatch}) - suppressing`);
+            write(makeFallback(`anomalous content in AI output (category: ${codexMatch}) - review suppressed for security`, runUrl));
             return;
           }
 
@@ -1080,7 +1083,7 @@ jobs:
         script: |
           const fs   = require('node:fs');
           const path = require('node:path');
-          const { hasToken, hasCanary, makeFallback, extractJson } =
+          const { findToken, findCanary, makeFallback, extractJson } =
             require(path.join(process.env.GITHUB_WORKSPACE, '_prepare/scripts/scan'));
 
           const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
@@ -1105,14 +1108,16 @@ jobs:
           }
           if (!review) { write(makeFallback('could not parse review JSON from Gemini output', runUrl)); return; }
 
-          if (hasToken(review)) {
-            core.warning('Secret pattern detected in Gemini output - suppressing');
-            write(makeFallback('secret pattern detected in AI output - review suppressed for security', runUrl));
+          const geminiTokenMatch = findToken(review);
+          if (geminiTokenMatch) {
+            core.warning(`Secret pattern detected in Gemini output (${geminiTokenMatch}) - suppressing`);
+            write(makeFallback(`secret pattern detected in AI output (category: ${geminiTokenMatch}) - review suppressed for security`, runUrl));
             return;
           }
-          if (hasCanary(review)) {
-            core.warning('Prompt-injection canary triggered in Gemini output - suppressing');
-            write(makeFallback('anomalous output detected - review suppressed for security', runUrl));
+          const geminiCanaryMatch = findCanary(review);
+          if (geminiCanaryMatch) {
+            core.warning(`Prompt-injection canary triggered in Gemini output (${geminiCanaryMatch}) - suppressing`);
+            write(makeFallback(`anomalous output detected (category: ${geminiCanaryMatch}) - review suppressed for security`, runUrl));
             return;
           }
 
@@ -1192,7 +1197,7 @@ jobs:
         script: |
           const fs   = require('node:fs');
           const path = require('node:path');
-          const { hasToken, hasCanary, validateReview } =
+          const { findToken, findCanary, validateReview } =
             require(path.join(process.env.GITHUB_WORKSPACE, '_prepare/scripts/scan'));
 
           const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
@@ -1214,14 +1219,15 @@ jobs:
             fs.writeFileSync('review.json', JSON.stringify(review));
           }
 
-          if (hasToken(review) || hasCanary(review)) {
+          const secondPassMatch = findToken(review) || findCanary(review);
+          if (secondPassMatch) {
             review = {
-              body:     `> [!WARNING]\n> **AI review suppressed:** secret or anomalous pattern detected in artifact during second-pass scan.\n>\n> See [workflow run](${runUrl}).`,
+              body:     `> [!WARNING]\n> **AI review suppressed:** secret or anomalous pattern detected in artifact during second-pass scan (category: ${secondPassMatch}).\n>\n> See [workflow run](${runUrl}).`,
               event:    'COMMENT',
               comments: [],
             };
             fs.writeFileSync('review.json', JSON.stringify(review));
-            core.warning('Second-pass scan found secret/canary pattern - review replaced with failure notice');
+            core.warning(`Second-pass scan found secret/canary pattern (${secondPassMatch}) - review replaced with failure notice`);
           }
 
           core.setOutput('event', review.event || 'COMMENT');

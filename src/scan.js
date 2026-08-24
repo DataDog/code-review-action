@@ -1,41 +1,62 @@
 'use strict';
 const TOKEN_PATTERNS = [
-  /ghp_[A-Za-z0-9_]{36,}/,
-  /gho_[A-Za-z0-9_]{36,}/,
-  /ghs_[A-Za-z0-9_]{36,}/,
-  /ghr_[A-Za-z0-9_]{36,}/,
-  /ghu_[A-Za-z0-9_]{36,}/,
-  /github_pat_[A-Za-z0-9_]{82,}/,
-  /sk-ant-api[0-9]{2}-[A-Za-z0-9_\-]+/,
-  /sk-ant-oat[0-9]{2}-[A-Za-z0-9_\-]+/,
-  /sk-ant-sid[0-9]{2}-[A-Za-z0-9_\-]+/,
-  /sk-ant-[A-Za-z0-9_\-]{20,}/,
-  /sk-proj-[A-Za-z0-9_\-]{20,}/,
-  /sk-svcacct-[A-Za-z0-9_\-]{20,}/,
-  /sk-[A-Za-z0-9]{48,}/,
-  /AKIA[A-Z0-9]{16}/,
-  /xox[bpasr]-[A-Za-z0-9\-]{10,}/,
-  /AIzaSy[A-Za-z0-9_\-]{33,39}/,
-  /BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY/,
+  { label: 'github-token',    pattern: /ghp_[A-Za-z0-9_]{36,}/ },
+  { label: 'github-token',    pattern: /gho_[A-Za-z0-9_]{36,}/ },
+  { label: 'github-token',    pattern: /ghs_[A-Za-z0-9_]{36,}/ },
+  { label: 'github-token',    pattern: /ghr_[A-Za-z0-9_]{36,}/ },
+  { label: 'github-token',    pattern: /ghu_[A-Za-z0-9_]{36,}/ },
+  { label: 'github-token',    pattern: /github_pat_[A-Za-z0-9_]{82,}/ },
+  { label: 'anthropic-key',   pattern: /sk-ant-api[0-9]{2}-[A-Za-z0-9_\-]+/ },
+  { label: 'anthropic-key',   pattern: /sk-ant-oat[0-9]{2}-[A-Za-z0-9_\-]+/ },
+  { label: 'anthropic-key',   pattern: /sk-ant-sid[0-9]{2}-[A-Za-z0-9_\-]+/ },
+  { label: 'anthropic-key',   pattern: /sk-ant-[A-Za-z0-9_\-]{20,}/ },
+  { label: 'openai-key',      pattern: /sk-proj-[A-Za-z0-9_\-]{20,}/ },
+  { label: 'openai-key',      pattern: /sk-svcacct-[A-Za-z0-9_\-]{20,}/ },
+  { label: 'openai-key',      pattern: /sk-[A-Za-z0-9]{48,}/ },
+  { label: 'aws-access-key',  pattern: /AKIA[A-Z0-9]{16}/ },
+  { label: 'slack-token',     pattern: /xox[bpasr]-[A-Za-z0-9\-]{10,}/ },
+  { label: 'gemini-api-key',  pattern: /AIzaSy[A-Za-z0-9_\-]{33,39}/ },
+  { label: 'private-key',     pattern: /BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY/ },
 ];
 const CANARY_PATTERNS = [
-  /(?:curl|wget|nc|bash|sh\s+-c|eval)\s+/i,
-  /\bexec\s+["'\/\-]/i,
-  />>?\s*\$GITHUB_OUTPUT/,
-  />>?\s*\$GITHUB_ENV/,
+  // curl/wget/nc/eval rarely appear as bare English words, so any same-line
+  // argument (not a code-fence "```curl\n" style newline) is enough signal.
+  { label: 'shell-invocation', pattern: /(?:curl|wget|nc|eval)[ \t]+[^\s]/i },
+  // bash/sh are common English/code words ("bash scripting", "the sh
+  // compatibility issue"), so require an actual invocation shape: a flag
+  // (-c, -x, ...) or a quoted/path argument, not just any following word.
+  { label: 'shell-invocation', pattern: /\b(?:bash|sh)\s+(?:-\w|["'\/])/i },
+  { label: 'exec-invocation',  pattern: /\bexec\s+["'\/\-]/i },
+  { label: 'github-output-override', pattern: />>?\s*\$GITHUB_OUTPUT/ },
+  { label: 'github-env-override',    pattern: />>?\s*\$GITHUB_ENV/ },
 ];
-function hasToken(v) {
-  if (typeof v === 'string') return TOKEN_PATTERNS.some(p => p.test(v));
-  if (Array.isArray(v))      return v.some(hasToken);
-  if (v && typeof v === 'object') return Object.values(v).some(hasToken);
-  return false;
+function findMatch(entries, v) {
+  if (typeof v === 'string') {
+    for (const { label, pattern } of entries) {
+      if (pattern.test(v)) return label;
+    }
+    return null;
+  }
+  if (Array.isArray(v)) {
+    for (const item of v) {
+      const m = findMatch(entries, item);
+      if (m) return m;
+    }
+    return null;
+  }
+  if (v && typeof v === 'object') {
+    for (const item of Object.values(v)) {
+      const m = findMatch(entries, item);
+      if (m) return m;
+    }
+    return null;
+  }
+  return null;
 }
-function hasCanary(v) {
-  if (typeof v === 'string') return CANARY_PATTERNS.some(p => p.test(v));
-  if (Array.isArray(v))      return v.some(hasCanary);
-  if (v && typeof v === 'object') return Object.values(v).some(hasCanary);
-  return false;
-}
+function findToken(v) { return findMatch(TOKEN_PATTERNS, v); }
+function findCanary(v) { return findMatch(CANARY_PATTERNS, v); }
+function hasToken(v) { return findToken(v) !== null; }
+function hasCanary(v) { return findCanary(v) !== null; }
 function makeFallback(msg, runUrl) {
   return {
     body:     `> [!WARNING]\n> **AI review could not be posted:** ${msg}\n>\n> See [workflow run](${runUrl}) for details.`,
@@ -85,4 +106,4 @@ function extractJson(text) {
   }
   return null;
 }
-module.exports = { hasToken, hasCanary, makeFallback, validateReview, extractJson };
+module.exports = { hasToken, hasCanary, findToken, findCanary, makeFallback, validateReview, extractJson };
