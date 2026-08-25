@@ -1456,7 +1456,7 @@ jobs:
       id: dd_sts
       if: inputs.datadog_sts_policy != ''
       continue-on-error: true
-      uses: DataDog/dd-sts-action@2e8187910199bd93129520183c093e19aa585c75 # v1.0.0
+      uses: DataDog/dd-sts-action@639d841c72f15e4e77747bd726ef8105ce971da2 # v1.0.5
       with:
         policy: ${{ inputs.datadog_sts_policy }}
     - name: Validate usage and submit finish metrics
