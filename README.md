@@ -116,9 +116,7 @@ jobs:
       datadog_api_key: ${{ needs.dd_sts.outputs.api_key }}
 ```
 
-This requires a separate job because [a job that calls a reusable workflow cannot have its own steps](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#supported-keywords-for-jobs-that-call-a-reusable-workflow) — the credential has to be minted in one job and read via `needs.<job>.outputs` in the one that calls `code-review.yml`.
-
-**Be aware:** GitHub Actions job outputs are never masked, regardless of how they're consumed downstream, and are readable via the Actions REST API for as long as the workflow run's logs are retained. In a public repository this means the minted key is visible to anyone for its TTL window, not just to the workflow. This repository's own `ai-review.yml` accepts that tradeoff for its short-lived, narrowly-scoped telemetry key; weigh it against your own threat model before copying the pattern, especially in a public repo. If that exposure is unacceptable, store a long-lived key as a regular repository secret instead (previous example) — the tradeoff there is a static credential rather than a public but short-lived one.
+This requires a separate job because [a job that calls a reusable workflow cannot have its own steps](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#supported-keywords-for-jobs-that-call-a-reusable-workflow) — the credential has to be minted in one job and read via `needs.<job>.outputs` in the one that calls `code-review.yml`. `DataDog/dd-sts-action` calls `::add-mask::` on the key before writing it to `GITHUB_OUTPUT`, so GitHub redacts it from logs for the rest of the run, and there's no REST API that exposes raw job/step output values. This is the same pattern used to wire dd-sts into other internal workflows.
 
 Missing credentials, an invalid site, and Datadog API errors produce GitHub warnings and remain fail-open: they do not change the review result.
 
