@@ -1,6 +1,6 @@
 # code-review-action
 
-A reusable GitHub Actions workflow that runs an AI model as a read-only code reviewer on pull requests, with a three-job security split and support for multiple providers.
+A reusable GitHub Actions workflow that runs an AI model as a read-only code reviewer on pull requests, with a security-focused job split, support for multiple providers, and optional privacy-preserving Datadog telemetry.
 
 ## Providers
 
@@ -39,6 +39,7 @@ jobs:
       provider:      claude        # claude | codex | gemini
       trigger_mode:  on_demand     # always | on_demand
       prompt_file:   .claude/review-prompt.md   # optional
+      telemetry_enabled: false      # default; no Datadog configuration needed
     secrets:
       anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
       # openai_api_key:  ${{ secrets.OPENAI_API_KEY }}
@@ -61,6 +62,92 @@ Add the API key for your chosen provider as a repository secret:
 | `trigger_mode` | string | `always` | `always` runs on PR events; `on_demand` requires a `/dd-review` comment from a write-access collaborator. |
 | `prompt_file` | string | `""` | Newline-separated list of Markdown review guide paths (read from the default branch). Root-level files apply to all PRs; subdirectory files apply only when changed files share that prefix. Falls back to a built-in prompt when empty or no file matches. Mutually exclusive with `prompt_file_pattern`. |
 | `prompt_file_pattern` | string | `""` | Glob pattern (evaluated against the default branch) used to auto-discover review guide files instead of listing them, e.g. `**/codereview_guideline.md`. Every matched file follows the same scoping rule as `prompt_file`. Mutually exclusive with `prompt_file`. |
+| `telemetry_enabled` | boolean | `false` | Submit review-run and provider usage metrics to Datadog from an isolated job. |
+| `datadog_site` | string | `datadoghq.com` | Datadog site parameter. Standard US, EU, AP, UK, and government sites are accepted; URLs and arbitrary hosts are rejected. |
+
+## Optional Datadog telemetry
+
+Telemetry is disabled by default. Enabling it does not grant Datadog credentials to `gate`, `prepare`, `review_claude`, `review_codex`, `review_gemini`, `post`, or either request-signal job. A single `telemetry` job, which runs once after every provider job settles, checks out only this action's repository at the exact reusable-workflow revision; it never checks out PR code or downloads the review, diff, prompts, PR description, or model output.
+
+### API-key configuration
+
+No Datadog application key is required, only an API key. The reusable workflow itself has no OIDC/dd-sts surface — it only accepts an optional `datadog_api_key` secret and hands it, unmodified, to the isolated `telemetry` job:
+
+```yaml
+jobs:
+  review:
+    uses: DataDog/code-review-action/.github/workflows/code-review.yml@<sha>
+    with:
+      provider: codex
+      telemetry_enabled: true
+      datadog_site: datadoghq.com
+    secrets:
+      openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+      datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
+```
+
+**Internal DataDog callers: minting a short-lived key with dd-sts.** Because this workflow runs directly on `pull_request`/`issue_comment` events (not `pull_request_target`), a GitHub environment cannot be used to gate a stored secret behind an approval step. Internal callers that would rather not store a long-lived API key can mint one at runtime via [dd-sts](https://datadoghq.atlassian.net/wiki/spaces/SECENG/pages/5769659435/User+guide+dd-sts) in their **own** workflow, in a dedicated job that requests the OIDC token, and pass the result into `secrets.datadog_api_key`:
+
+```yaml
+jobs:
+  dd_sts:
+    runs-on: ubuntu-latest
+    continue-on-error: true   # fail-open: `review` still runs if dd-sts is unavailable
+    permissions:
+      id-token: write
+    outputs:
+      api_key: ${{ steps.dd-sts.outputs.api_key }}
+    steps:
+      - name: Get Datadog credentials
+        id: dd-sts
+        uses: DataDog/dd-sts-action@<sha>
+        with:
+          policy: my-repo-telemetry
+
+  review:
+    needs: [dd_sts]
+    uses: DataDog/code-review-action/.github/workflows/code-review.yml@<sha>
+    with:
+      provider: codex
+      telemetry_enabled: true
+      datadog_site: datadoghq.com
+    secrets:
+      openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+      datadog_api_key: ${{ needs.dd_sts.outputs.api_key }}
+```
+
+This requires a separate job because [a job that calls a reusable workflow cannot have its own steps](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#supported-keywords-for-jobs-that-call-a-reusable-workflow) — the credential has to be minted in one job and read via `needs.<job>.outputs` in the one that calls `code-review.yml`. `DataDog/dd-sts-action` calls `::add-mask::` on the key before writing it to `GITHUB_OUTPUT`, so GitHub redacts it from logs for the rest of the run, and there's no REST API that exposes raw job/step output values. This is the same pattern used to wire dd-sts into other internal workflows.
+
+Missing credentials, an invalid site, and Datadog API errors produce GitHub warnings and remain fail-open: they do not change the review result.
+
+### Metrics and tags
+
+The `telemetry` job runs once, after every provider job settles, and submits a single batch of series covering the whole invocation:
+
+- `code_review_action.review_runs`
+- `code_review_action.provider_api_requests`
+- `code_review_action.input_tokens`
+- `code_review_action.cached_input_tokens`
+- `code_review_action.output_tokens`
+- `code_review_action.cost_usd`
+- `code_review_action.duration_ms`
+- `code_review_action.telemetry_missing`
+
+All submissions are count metrics so values can be summed across dashboard windows. Tags are limited to `provider`, `trigger` (`manual` or `automatic`), validated resolved `model` (or `unavailable`), `status`, `cost_source`, and `repository`. Actor, PR number, SHA, workflow/run ID, filenames, prompts, descriptions, diffs, and model responses are never sent as metrics or tags.
+
+### Usage and cost accuracy
+
+Normalized usage schema version 1 accepts null for genuinely unavailable fields. `cost_source` means:
+
+- `provider_reported`: the provider supplied the cost directly. Claude currently provides this value and it is preferred.
+- `estimated`: a tested local pricing table calculated the value. This workflow does not currently estimate any provider's cost.
+- `unavailable`: cost is null, never zero. Gemini exposes structured request/token statistics but not cost. The pinned Codex action exports only its final message, not the CLI's structured usage stream, so Codex request/token/model/cost fields remain unavailable pending an upstream machine-readable output.
+
+`code_review_action.telemetry_missing` is emitted whenever model, request, token, duration, or cost metadata is unavailable or rejected. Gemini output tokens include its candidate and thought-token billing dimensions; cached and uncached input are reported separately.
+
+### Cancellation limitation
+
+Telemetry uses `always()` where GitHub Actions permits, so `telemetry` still runs for a request that failed or was superseded by a newer `/dd-review`, with `status` tagging the outcome. A hard workflow cancellation can still prevent artifact upload or the downstream finish job from running at all. Provider billing reconciliation remains the authoritative source for cost.
 
 ## Custom review guide
 
@@ -122,10 +209,11 @@ Exit code is `1` when `error` is set, `2` on a usage error, `0` otherwise. `bin/
 
 ## Security model
 
-The pipeline uses a **three-job split**:
+The core review pipeline uses a split trust model, with optional telemetry on a separate branch:
 
 ```
-gate  ──►  review_{provider}  ──►  post
+gate ─► prepare ─► review_{provider} ─┬─► post
+                                     └─► telemetry
 ```
 
 | Job | GitHub permissions | What it does |
@@ -133,6 +221,7 @@ gate  ──►  review_{provider}  ──►  post
 | `gate` | `contents: read`, `pull-requests: read` | Validates the trigger, authorizes the actor (on_demand), resolves PR SHAs. |
 | `review_*` | `contents: read`, `pull-requests: read` | Runs the AI with read-only tools. No write permissions. |
 | `post` | `contents: read`, `pull-requests: write` | Downloads the artifact, re-scans, posts the review. Never runs AI. |
+| `telemetry` | `contents: read` | Submits one batch of metrics using the optional `datadog_api_key` secret. Never accesses PR/review content. The reusable workflow has no OIDC surface; callers that mint a key via dd-sts do so in their own workflow before invoking this one. |
 
 ### Trust boundaries
 
@@ -165,6 +254,7 @@ AI output is checked for shell commands (`curl`, `wget`, `bash`, etc.) and attem
 - The Claude sentinel `allowed_non_write_users: "__force_sandbox_dummy__"` activates subprocess isolation without granting any permission bypass.
 - `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"` prevents the Anthropic key from leaking into Claude's subprocesses.
 - Concurrency is keyed per PR so a second trigger cancels the prior in-flight run.
+- Datadog credentials are referenced only in the dedicated telemetry job. The downstream usage artifact is treated as untrusted: schema/provider/fields/numbers/tags are strictly validated, no artifact content is evaluated or interpolated into a shell command, and only allowlisted numeric metrics are submitted over HTTPS to a validated Datadog site.
 
 ## Schemas
 

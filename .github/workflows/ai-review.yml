@@ -5,7 +5,23 @@ on:
         types: [created]
 
 jobs:
+    dd_sts:
+        name: Get Datadog credentials
+        runs-on: ubuntu-latest
+        continue-on-error: true
+        permissions:
+            id-token: write
+        outputs:
+            api_key: ${{ steps.dd-sts.outputs.api_key }}
+        steps:
+            - name: Get Datadog credentials
+              id: dd-sts
+              uses: DataDog/dd-sts-action@2e8187910199bd93129520183c093e19aa585c75 # v1.0.0
+              with:
+                  policy: code-review-action-telemetry
+
     review:
+        needs: [dd_sts]
         permissions:
             contents: read
             pull-requests: write
@@ -16,7 +32,9 @@ jobs:
             trigger_mode: on_demand
             review_event: COMMENT_ONLY
             prompt_file_pattern: '**/codereview_guideline.md'
+            telemetry_enabled: true
         secrets:
             openai_api_key: ${{ secrets.OPENAI_API_KEY }}
             anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
             gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+            datadog_api_key: ${{ needs.dd_sts.outputs.api_key }}

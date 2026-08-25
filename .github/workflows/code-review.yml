@@ -3,9 +3,11 @@
 #
 # -- Security model - read before editing -------------------------------------
 #
-# The pipeline has six jobs: gate -> (start_signal ‖ prepare) -> review_{provider} -> post -> finish_signal.
-# Treat the checked-out PR tree and all PR/comment metadata as hostile input
-# subject to prompt injection.
+# The pipeline has six main jobs and optional telemetry: gate -> (start_signal ‖ prepare) -> review_{provider} -> post -> finish_signal (-> telemetry).
+# The Datadog credential exists only in telemetry, which runs once after every
+# provider job settles; it never checks out the caller repository, downloads
+# review output, or runs AI. Treat the checked-out PR tree and all PR/comment
+# metadata as hostile input subject to prompt injection.
 #
 # Job permissions (principle of least privilege):
 #   gate:            contents: read  pull-requests: read
@@ -14,6 +16,7 @@
 #   review_*:        contents: read  pull-requests: read   (no write)
 #   post:            contents: read  pull-requests: write
 #   finish_signal:                   pull-requests: write  checks: write
+#   telemetry: contents: read
 #
 # The AI model runs inside review_*, which has NO write capability on GitHub.
 # Only `post` writes to GitHub, and it never invokes the AI.
@@ -142,6 +145,14 @@ on:
           that can influence merge eligibility.
         type: string
         default: 'COMMENT_ONLY'
+      telemetry_enabled:
+        description: 'Submit privacy-preserving Datadog metrics from an isolated job.'
+        type: boolean
+        default: false
+      datadog_site:
+        description: 'Datadog site parameter, for example datadoghq.com or datadoghq.eu.'
+        type: string
+        default: 'datadoghq.com'
     secrets:
       anthropic_api_key:
         required: false
@@ -152,6 +163,9 @@ on:
       gemini_api_key:
         required: false
         description: 'Google API key (required when provider=gemini)'
+      datadog_api_key:
+        required: false
+        description: 'Datadog API key (optional; used only by the isolated telemetry job). Internal callers may mint this at runtime via dd-sts in their own caller workflow.'
 
 permissions: {}
 
@@ -435,6 +449,13 @@ jobs:
         # and rejects as an invalid package config.
         echo '{"type":"commonjs"}' > _prepare/scripts/package.json
 
+    - name: Stage optional telemetry adapter
+      if: inputs.telemetry_enabled
+      continue-on-error: true
+      run: |
+        cp _action/src/telemetry.js _prepare/scripts/telemetry.js
+        cp _action/bin/telemetry.js _prepare/scripts/telemetry-cli.js
+
     - name: Sanitize PR description
       # The PR title/body is author-controlled and is a prompt-injection vector.
       # Decode (base64 avoids any GITHUB_OUTPUT delimiter corruption from the
@@ -589,7 +610,9 @@ jobs:
   review_claude:
     name: Review (Claude)
     needs: [gate, prepare]
-    if: needs.gate.outputs.proceed == 'true' && needs.gate.outputs.provider == 'claude'
+    if: >-
+      always() && needs.gate.outputs.proceed == 'true' && needs.prepare.result == 'success' &&
+      needs.gate.outputs.provider == 'claude'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -632,6 +655,11 @@ jobs:
       with:
         name: ai-review-prepare
         path: _prepare
+
+    - name: Record provider start time
+      if: inputs.telemetry_enabled
+      continue-on-error: true
+      run: node -e "require('node:fs').writeFileSync('_provider-start-ms', String(Date.now()))"
 
     - name: Run Claude (read-only agent mode)
       id: claude
@@ -685,6 +713,19 @@ jobs:
             code itself has any findings.
 
           Read `./_prepare/guidelines.md` in full and follow it exactly.
+
+    - name: Normalize Claude usage metadata
+      if: always() && inputs.telemetry_enabled
+      continue-on-error: true
+      env:
+        EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+      run: >-
+        node _prepare/scripts/telemetry-cli.js normalize
+        --provider claude
+        --source "$EXECUTION_FILE"
+        --status "${{ steps.claude.outcome }}"
+        --started-ms-file _provider-start-ms
+        --output _usage/usage.json
 
     - name: Extract, validate, and scan Claude output
       id: extract
@@ -794,6 +835,16 @@ jobs:
         if-no-files-found: error
         retention-days: 1
 
+    - name: Upload normalized usage artifact
+      if: always() && inputs.telemetry_enabled
+      continue-on-error: true
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ai-review-usage
+        path: _usage/usage.json
+        if-no-files-found: error
+        retention-days: 1
+
 
   # -- REVIEW (Codex) --------------------------------------------------------
   # Runs openai/codex-action. The aggregated guidelines from prepare are used
@@ -801,7 +852,9 @@ jobs:
   review_codex:
     name: Review (Codex)
     needs: [gate, prepare]
-    if: needs.gate.outputs.proceed == 'true' && needs.gate.outputs.provider == 'codex'
+    if: >-
+      always() && needs.gate.outputs.proceed == 'true' && needs.prepare.result == 'success' &&
+      needs.gate.outputs.provider == 'codex'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -892,9 +945,13 @@ jobs:
         }
         SCHEMA
 
-    # Codex must be the last active step: nothing with API-key access runs after it.
-    # Artifact upload (actions/upload-artifact) has no shell execution and no access
-    # to the OpenAI key.
+    - name: Record provider start time
+      if: inputs.telemetry_enabled
+      continue-on-error: true
+      run: node -e "require('node:fs').writeFileSync('_provider-start-ms', String(Date.now()))"
+
+    # The API key is scoped to this action input. Later trusted adapters never
+    # receive it and PR-authored code is not executed after this step.
     - name: Run Codex
       id: run_codex
       uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1
@@ -906,6 +963,16 @@ jobs:
         # drop-sudo prevents passwordless sudo from reading the API key via /proc.
         safety-strategy: drop-sudo
         sandbox:         read-only
+
+    - name: Record unavailable Codex usage metadata
+      if: always() && inputs.telemetry_enabled
+      continue-on-error: true
+      run: >-
+        node _prepare/scripts/telemetry-cli.js normalize
+        --provider codex
+        --status "${{ steps.run_codex.outcome }}"
+        --started-ms-file _provider-start-ms
+        --output _usage/usage.json
 
     - name: Scan Codex output
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -976,6 +1043,16 @@ jobs:
         if-no-files-found: error
         retention-days: 1
 
+    - name: Upload normalized usage artifact
+      if: always() && inputs.telemetry_enabled
+      continue-on-error: true
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ai-review-usage
+        path: _usage/usage.json
+        if-no-files-found: error
+        retention-days: 1
+
 
   # -- REVIEW (Gemini) -------------------------------------------------------
   # Runs google-github-actions/run-gemini-cli with read-only tool configuration
@@ -984,7 +1061,9 @@ jobs:
   review_gemini:
     name: Review (Gemini)
     needs: [gate, prepare]
-    if: needs.gate.outputs.proceed == 'true' && needs.gate.outputs.provider == 'gemini'
+    if: >-
+      always() && needs.gate.outputs.proceed == 'true' && needs.prepare.result == 'success' &&
+      needs.gate.outputs.provider == 'gemini'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1056,6 +1135,11 @@ jobs:
           echo '__EOF_GEMINI_PROMPT__'
         } >> "$GITHUB_OUTPUT"
 
+    - name: Record provider start time
+      if: inputs.telemetry_enabled
+      continue-on-error: true
+      run: node -e "require('node:fs').writeFileSync('_provider-start-ms', String(Date.now()))"
+
     - name: Run Gemini CLI
       id: gemini
       uses: DataDog/run-gemini-cli@6c0453733fe7db5b5c115b4039509b13c98d8a37 # v0.1.22 main-dd
@@ -1080,6 +1164,17 @@ jobs:
               ]
             }
           }
+
+    - name: Normalize Gemini usage metadata
+      if: always() && inputs.telemetry_enabled
+      continue-on-error: true
+      run: >-
+        node _prepare/scripts/telemetry-cli.js normalize
+        --provider gemini
+        --source gemini-artifacts/stdout.log
+        --status "${{ steps.gemini.outcome }}"
+        --started-ms-file _provider-start-ms
+        --output _usage/usage.json
 
     - name: Extract, validate, and scan Gemini output
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -1158,6 +1253,16 @@ jobs:
       with:
         name: ai-review
         path: _review/review.json
+        if-no-files-found: error
+        retention-days: 1
+
+    - name: Upload normalized usage artifact
+      if: always() && inputs.telemetry_enabled
+      continue-on-error: true
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ai-review-usage
+        path: _usage/usage.json
         if-no-files-found: error
         retention-days: 1
 
@@ -1304,6 +1409,48 @@ jobs:
             core.info('Fallback issue comment posted');
           }
 
+
+  # -- TELEMETRY
+  # Single telemetry job, run once after every provider job settles. The
+  # normalized artifact is untrusted; the pinned helper applies a strict
+  # schema/field/number/tag allowlist before constructing the metrics payload.
+  # This job never downloads review output/preparation artifacts or checks out
+  # caller/PR code.
+  telemetry:
+    name: Telemetry
+    needs: [gate, review_claude, review_codex, review_gemini]
+    if: always() && needs.gate.outputs.proceed == 'true' && inputs.telemetry_enabled
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout telemetry code (self, pinned)
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+        persist-credentials: false
+        fetch-depth: 1
+    - name: Download normalized usage only
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: ai-review-usage
+        path: _usage
+    - name: Validate usage and submit finish metrics
+      env:
+        DD_API_KEY: ${{ secrets.datadog_api_key }}
+      run: >-
+        node bin/telemetry.js finish
+        --provider "${{ needs.gate.outputs.provider }}"
+        --trigger "${{ inputs.trigger_mode == 'on_demand' && 'manual' || 'automatic' }}"
+        --repository "${{ github.repository }}"
+        --site "${{ inputs.datadog_site }}"
+        --usage-file _usage/usage.json
+        --claude-result "${{ needs.review_claude.result }}"
+        --codex-result "${{ needs.review_codex.result }}"
+        --gemini-result "${{ needs.review_gemini.result }}"
 
   # -- FINISH SIGNAL ---------------------------------------------------------
   # Closes the check-run and swaps the 👀 reaction for 🚀 (success) or 😕

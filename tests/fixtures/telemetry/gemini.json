@@ -1,0 +1,14 @@
+{
+  "session_id": "sanitized",
+  "stats": {
+    "models": {
+      "gemini-2.5-pro": {
+        "api": {"totalRequests": 3, "totalErrors": 0, "totalLatencyMs": 41000},
+        "tokens": {"input": 1200, "prompt": 2000, "candidates": 300, "total": 2350, "cached": 800, "thoughts": 50, "tool": 0},
+        "roles": {}
+      }
+    },
+    "tools": {"totalCalls": 0},
+    "files": {"totalLinesAdded": 0, "totalLinesRemoved": 0}
+  }
+}
