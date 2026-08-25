@@ -5,13 +5,8 @@ on:
         types: [created]
 
 jobs:
-    # Mints a short-lived Datadog API key via dd-sts instead of storing one.
-    # continue-on-error keeps this fail-open: if dd-sts is unreachable or the
-    # policy is missing, `review` still runs with an empty datadog_api_key,
-    # and the reusable workflow's telemetry job already warns and no-ops on a
-    # missing key rather than failing the review.
     dd_sts:
-        name: Mint Datadog credentials
+        name: Get Datadog credentials
         runs-on: ubuntu-latest
         continue-on-error: true
         permissions:
@@ -37,8 +32,6 @@ jobs:
             trigger_mode: on_demand
             review_event: COMMENT_ONLY
             prompt_file_pattern: '**/codereview_guideline.md'
-            # Telemetry enabled here to exercise the isolated telemetry job on
-            # this repo's own PRs. See README.md for the API-key configuration.
             telemetry_enabled: true
         secrets:
             openai_api_key: ${{ secrets.OPENAI_API_KEY }}
