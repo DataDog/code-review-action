@@ -10,12 +10,19 @@ jobs:
             contents: read
             pull-requests: write
             checks: write
+            # Lets the reusable workflow's telemetry job mint a short-lived
+            # Datadog API key via dd-sts instead of a stored secret.
+            id-token: write
         uses: DataDog/code-review-action/.github/workflows/code-review.yml@main
         with:
             provider: claude
             trigger_mode: on_demand
             review_event: COMMENT_ONLY
             prompt_file_pattern: '**/codereview_guideline.md'
+            # Telemetry enabled here to exercise the isolated telemetry job on
+            # this repo's own PRs. See README.md for the API-key configuration.
+            telemetry_enabled: true
+            datadog_sts_policy: code-review-action-telemetry
         secrets:
             openai_api_key: ${{ secrets.OPENAI_API_KEY }}
             anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

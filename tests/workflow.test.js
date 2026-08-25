@@ -251,3 +251,160 @@ test('gate does not fail the mutual-exclusivity guard when only prompt_file_patt
   const calls  = await runGateScript(script, { PROMPT_FILE_PATTERN: '**/codereview_guideline.md' });
   assert.equal(calls.setFailed.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Optional telemetry workflow structure and gate behavior
+// ---------------------------------------------------------------------------
+
+function extractJobBlock(yaml, name, nextName) {
+  const start = yaml.indexOf(`\n  ${name}:\n`);
+  if (start < 0) throw new Error(`job '${name}' not found`);
+  const end = nextName ? yaml.indexOf(`\n  ${nextName}:\n`, start + 1) : yaml.length;
+  if (nextName && end < 0) throw new Error(`next job '${nextName}' not found`);
+  return yaml.slice(start, end);
+}
+
+test('telemetry is disabled by default and Datadog secret is optional', () => {
+  const yaml = readWorkflow();
+  const enabled = extractInputBlock(yaml, 'telemetry_enabled', 'datadog_site');
+  assert.match(enabled, /type:\s*boolean/);
+  assert.match(enabled, /default:\s*false/);
+  assert.match(yaml, /datadog_api_key:\n\s+required:\s*false/);
+});
+
+test('authorized manual provider override becomes the effective provider', async () => {
+  const yaml = readWorkflow();
+  const script = extractScriptBlock(yaml, 'const triggerMode = process.env.TRIGGER_MODE;');
+  const savedEnv = { ...process.env };
+  Object.assign(process.env, {
+    TRIGGER_MODE: 'on_demand', PROVIDER: 'claude', PROMPT_FILE: '', PROMPT_FILE_PATTERN: '',
+    GITHUB_SERVER_URL: 'https://github.com', GITHUB_REPOSITORY: 'DataDog/cra', GITHUB_RUN_ID: '1',
+  });
+  const outputs = new Map();
+  const calls = { failed: [], permissionChecks: 0 };
+  const core = {
+    setOutput: (key, value) => outputs.set(key, value),
+    setFailed: (message) => calls.failed.push(message),
+    info: () => {}, warning: () => {},
+  };
+  const context = {
+    eventName: 'issue_comment', repo: { owner: 'DataDog', repo: 'cra' },
+    payload: {
+      issue: { number: 7, pull_request: {} },
+      comment: { body: '/dd-review gemini', user: { login: 'trusted-user' } },
+    },
+  };
+  const github = { rest: {
+    repos: { getCollaboratorPermissionLevel: async () => { calls.permissionChecks++; return { data: { permission: 'write' } }; } },
+    pulls: { get: async () => ({ data: { head: { sha: 'a' }, base: { sha: 'b' }, title: '', body: '' } }) },
+    checks: { create: async () => ({ data: { id: 9 } }) },
+  } };
+  try {
+    await new Function('core', 'context', 'github', `return (async () => { ${script} })();`)(core, context, github);
+  } finally {
+    process.env = savedEnv;
+  }
+  assert.deepEqual(calls.failed, []);
+  assert.equal(calls.permissionChecks, 1);
+  assert.equal(outputs.get('proceed'), 'true');
+  assert.equal(outputs.get('provider'), 'gemini');
+});
+
+test('unrelated issue comments and rejected requests cannot reach telemetry', async () => {
+  const yaml = readWorkflow();
+  const script = extractScriptBlock(yaml, 'const triggerMode = process.env.TRIGGER_MODE;');
+  const unrelated = await runGateScript(script, { TRIGGER_MODE: 'on_demand' });
+  assert.deepEqual(unrelated.setOutput, [['proceed', 'false']]);
+  const finish = extractJobBlock(yaml, 'telemetry', 'finish_signal');
+  assert.match(finish, /needs\.gate\.outputs\.proceed == 'true'/);
+  assert.equal((finish.match(/telemetry\.js finish/g) || []).length, 1);
+});
+
+test('manual requests from commenters without write access are rejected', async () => {
+  const yaml = readWorkflow();
+  const script = extractScriptBlock(yaml, 'const triggerMode = process.env.TRIGGER_MODE;');
+  const savedEnv = { ...process.env };
+  Object.assign(process.env, {
+    TRIGGER_MODE: 'on_demand', PROVIDER: 'claude', PROMPT_FILE: '', PROMPT_FILE_PATTERN: '',
+  });
+  const outputs = new Map();
+  const core = {
+    setOutput: (key, value) => outputs.set(key, value),
+    setFailed: () => {}, info: () => {}, warning: () => {},
+  };
+  const context = {
+    eventName: 'issue_comment', repo: { owner: 'DataDog', repo: 'cra' },
+    payload: {
+      issue: { number: 7, pull_request: {} },
+      comment: { body: '/dd-review', user: { login: 'untrusted-user' } },
+    },
+  };
+  const github = { rest: {
+    repos: { getCollaboratorPermissionLevel: async () => ({ data: { permission: 'read' } }) },
+  } };
+  try {
+    await new Function('core', 'context', 'github', `return (async () => { ${script} })();`)(core, context, github);
+  } finally {
+    process.env = savedEnv;
+  }
+  assert.equal(outputs.get('proceed'), 'false');
+});
+
+test('dd-sts is optional and its OIDC permission is confined to the telemetry job', () => {
+  const yaml = readWorkflow();
+  assert.match(yaml, /datadog_sts_policy:\n(?:.|\n)*?default:\s*''/);
+  assert.match(yaml, /datadog_api_key:\n\s+required:\s*false/);
+  const telemetryBlock = extractJobBlock(yaml, 'telemetry', 'finish_signal');
+  assert.match(telemetryBlock, /id-token:\s*write/);
+  assert.match(telemetryBlock, /dd-sts-action/);
+  for (const [name, next] of [
+    ['gate', 'start_signal'], ['start_signal', 'prepare'], ['prepare', 'review_claude'],
+    ['review_claude', 'review_codex'], ['review_codex', 'review_gemini'],
+    ['review_gemini', 'post'], ['post', 'telemetry'], ['finish_signal', null],
+  ]) {
+    const block = extractJobBlock(yaml, name, next);
+    assert.doesNotMatch(block, /id-token:\s*write|dd-sts-action/, `${name} must not request an OIDC token`);
+  }
+});
+
+test('Datadog credentials are never referenced by provider, prepare, post, or signal jobs', () => {
+  const yaml = readWorkflow();
+  const names = [
+    ['prepare', 'review_claude'], ['review_claude', 'review_codex'],
+    ['review_codex', 'review_gemini'], ['review_gemini', 'post'],
+    ['post', 'telemetry'], ['finish_signal', null],
+  ];
+  for (const [name, next] of names) {
+    const block = extractJobBlock(yaml, name, next);
+    assert.doesNotMatch(block, /datadog_api_key|DD_API_KEY|dd_sts\.outputs\.api_key/,
+      `${name} must not reference a Datadog credential`);
+  }
+});
+
+test('telemetryloads pinned self code and never accesses PR code or review/model artifacts', () => {
+  const yaml = readWorkflow();
+  const block = extractJobBlock(yaml, 'telemetry', 'finish_signal');
+  assert.match(block, /repository:\s*\$\{\{\s*job\.workflow_repository\s*\}\}/);
+  assert.match(block, /ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}/);
+  assert.doesNotMatch(block, /head_sha|__untrusted|ai-review-prepare|name:\s*ai-review\s*$/m);
+});
+
+test('telemetryremains fail-open and review jobs record usage without waiting on it', () => {
+  const yaml = readWorkflow();
+  assert.match(extractJobBlock(yaml, 'telemetry', 'finish_signal'), /continue-on-error:\s*true/);
+  for (const [name, next] of [['review_claude', 'review_codex'], ['review_codex', 'review_gemini'], ['review_gemini', 'post']]) {
+    const block = extractJobBlock(yaml, name, next);
+    assert.match(block, /needs: \[gate, prepare\]/);
+    assert.match(block, /if: >-\n\s+always\(\)/);
+    const usageStep = name === 'review_claude' ? 'Normalize Claude usage metadata'
+      : name === 'review_codex' ? 'Record unavailable Codex usage metadata'
+        : 'Normalize Gemini usage metadata';
+    for (const step of ['Record provider start time', usageStep, 'Upload normalized usage artifact']) {
+      const start = block.indexOf(`- name: ${step}`);
+      assert.ok(start >= 0, `${name} must contain ${step}`);
+      const nextStep = block.indexOf('\n    - name:', start + 1);
+      const stepBlock = block.slice(start, nextStep < 0 ? block.length : nextStep);
+      assert.match(stepBlock, /continue-on-error:\s*true/, `${name} ${step} must be fail-open`);
+    }
+  }
+});

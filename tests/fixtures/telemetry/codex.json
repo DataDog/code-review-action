@@ -1,0 +1,5 @@
+[
+  {"type":"thread.started","thread_id":"sanitized"},
+  {"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":800,"output_tokens":90}},
+  {"type":"turn.completed","usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":30}}
+]
