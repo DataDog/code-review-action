@@ -16,8 +16,7 @@
 #   review_*:        contents: read  pull-requests: read   (no write)
 #   post:            contents: read  pull-requests: write
 #   finish_signal:                   pull-requests: write  checks: write
-#   telemetry: contents: read  id-token: write (id-token only used when
-#              datadog_sts_policy is set, to mint a Datadog API key via dd-sts)
+#   telemetry: contents: read
 #
 # The AI model runs inside review_*, which has NO write capability on GitHub.
 # Only `post` writes to GitHub, and it never invokes the AI.
@@ -154,17 +153,6 @@ on:
         description: 'Datadog site parameter, for example datadoghq.com or datadoghq.eu.'
         type: string
         default: 'datadoghq.com'
-      datadog_sts_policy:
-        description: |
-          Name of a dd-sts policy file (defined in dd-source) authorizing this
-          caller to mint a short-lived Datadog API key via DataDog/dd-sts-action,
-          instead of a long-lived stored secret. When set, the telemetry job
-          exchanges it for a key at runtime; the caller's job that invokes this
-          workflow must grant `permissions: id-token: write`. Falls back to the
-          datadog_api_key secret when empty. Internal DataDog callers only -
-          see README.md.
-        type: string
-        default: ''
     secrets:
       anthropic_api_key:
         required: false
@@ -177,7 +165,7 @@ on:
         description: 'Google API key (required when provider=gemini)'
       datadog_api_key:
         required: false
-        description: 'Datadog API key (optional; used only by the isolated telemetry job when datadog_sts_policy is not set)'
+        description: 'Datadog API key (optional; used only by the isolated telemetry job). Internal callers may mint this at runtime via dd-sts in their own caller workflow.'
 
 permissions: {}
 
@@ -1424,8 +1412,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Only exercised when datadog_sts_policy is set; unused otherwise.
-      id-token: write
     steps:
     - name: Checkout telemetry code (self, pinned)
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1440,16 +1426,9 @@ jobs:
       with:
         name: ai-review-usage
         path: _usage
-    - name: Mint Datadog credentials via dd-sts
-      id: dd_sts
-      if: inputs.datadog_sts_policy != ''
-      continue-on-error: true
-      uses: DataDog/dd-sts-action@2e8187910199bd93129520183c093e19aa585c75 # v1.0.0
-      with:
-        policy: ${{ inputs.datadog_sts_policy }}
     - name: Validate usage and submit finish metrics
       env:
-        DD_API_KEY: ${{ steps.dd_sts.outputs.api_key || secrets.datadog_api_key }}
+        DD_API_KEY: ${{ secrets.datadog_api_key }}
       run: >-
         node bin/telemetry.js finish
         --provider "${{ needs.gate.outputs.provider }}"

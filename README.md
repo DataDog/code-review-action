@@ -64,7 +64,6 @@ Add the API key for your chosen provider as a repository secret:
 | `prompt_file_pattern` | string | `""` | Glob pattern (evaluated against the default branch) used to auto-discover review guide files instead of listing them, e.g. `**/codereview_guideline.md`. Every matched file follows the same scoping rule as `prompt_file`. Mutually exclusive with `prompt_file`. |
 | `telemetry_enabled` | boolean | `false` | Submit review-run and provider usage metrics to Datadog from an isolated job. |
 | `datadog_site` | string | `datadoghq.com` | Datadog site parameter. Standard US, EU, AP, UK, and government sites are accepted; URLs and arbitrary hosts are rejected. |
-| `datadog_sts_policy` | string | `""` | Name of a dd-sts policy file (internal DataDog callers only) used to mint a short-lived Datadog API key at runtime instead of a stored secret. Requires the caller's job to grant `permissions: id-token: write`. Falls back to the `datadog_api_key` secret when empty. |
 
 ## Optional Datadog telemetry
 
@@ -72,31 +71,7 @@ Telemetry is disabled by default. Enabling it does not grant Datadog credentials
 
 ### API-key configuration
 
-No Datadog application key is required, only an API key. Because this workflow runs directly on `pull_request`/`issue_comment` events (not `pull_request_target`), a GitHub environment cannot be used to gate a stored secret behind an approval step. Two configurations are supported:
-
-**Internal DataDog callers (recommended): dd-sts.** Set `datadog_sts_policy` to the name of a [dd-sts](https://datadoghq.atlassian.net/wiki/spaces/SECENG/pages/5769659435/User+guide+dd-sts) policy file defined in `dd-source`, and grant the calling job `permissions: id-token: write`. The `telemetry` job then exchanges that policy for a short-lived Datadog API key at runtime via `DataDog/dd-sts-action` — no long-lived secret is stored anywhere:
-
-```yaml
-jobs:
-  review:
-    permissions:
-      contents: read
-      pull-requests: write
-      checks: write
-      id-token: write   # required for dd-sts
-    uses: DataDog/code-review-action/.github/workflows/code-review.yml@<sha>
-    with:
-      provider: codex
-      telemetry_enabled: true
-      datadog_site: datadoghq.com
-      datadog_sts_policy: my-repo-telemetry
-    secrets:
-      openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-```
-
-Even though the dd-sts exchange runs inside this reusable workflow's `telemetry` job, the OIDC token it requests still carries the *calling* repository's identity (GitHub reflects the top-level caller in the `sub`/`repository` claims of tokens minted from within a called reusable workflow), so the dd-sts policy is written against the caller, not against `DataDog/code-review-action`. See the [dd-sts user guide](https://datadoghq.atlassian.net/wiki/spaces/SECENG/pages/5769659435/User+guide+dd-sts) for policy syntax.
-
-**Other callers: stored secret.** Store a Datadog API key in the caller repository and pass it as the optional reusable-workflow secret:
+No Datadog application key is required, only an API key. The reusable workflow itself has no OIDC/dd-sts surface — it only accepts an optional `datadog_api_key` secret and hands it, unmodified, to the isolated `telemetry` job:
 
 ```yaml
 jobs:
@@ -111,7 +86,39 @@ jobs:
       datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
 ```
 
-`datadog_sts_policy` takes precedence when both are configured. Do not try to mint a key in the *caller's own* steps and pass it through as a plain job output into `secrets:` — [a job that calls a reusable workflow cannot have its own steps](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#supported-keywords-for-jobs-that-call-a-reusable-workflow), and job outputs are not masked, so routing a minted key through one risks leaking it via the Actions API. `datadog_sts_policy` avoids this entirely: only a non-sensitive policy name crosses the workflow boundary, and the key itself never leaves the `telemetry` job.
+**Internal DataDog callers: minting a short-lived key with dd-sts.** Because this workflow runs directly on `pull_request`/`issue_comment` events (not `pull_request_target`), a GitHub environment cannot be used to gate a stored secret behind an approval step. Internal callers that would rather not store a long-lived API key can mint one at runtime via [dd-sts](https://datadoghq.atlassian.net/wiki/spaces/SECENG/pages/5769659435/User+guide+dd-sts) in their **own** workflow, in a dedicated job that requests the OIDC token, and pass the result into `secrets.datadog_api_key`:
+
+```yaml
+jobs:
+  dd_sts:
+    runs-on: ubuntu-latest
+    continue-on-error: true   # fail-open: `review` still runs if dd-sts is unavailable
+    permissions:
+      id-token: write
+    outputs:
+      api_key: ${{ steps.dd-sts.outputs.api_key }}
+    steps:
+      - name: Get Datadog credentials
+        id: dd-sts
+        uses: DataDog/dd-sts-action@<sha>
+        with:
+          policy: my-repo-telemetry
+
+  review:
+    needs: [dd_sts]
+    uses: DataDog/code-review-action/.github/workflows/code-review.yml@<sha>
+    with:
+      provider: codex
+      telemetry_enabled: true
+      datadog_site: datadoghq.com
+    secrets:
+      openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+      datadog_api_key: ${{ needs.dd_sts.outputs.api_key }}
+```
+
+This requires a separate job because [a job that calls a reusable workflow cannot have its own steps](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#supported-keywords-for-jobs-that-call-a-reusable-workflow) — the credential has to be minted in one job and read via `needs.<job>.outputs` in the one that calls `code-review.yml`.
+
+**Be aware:** GitHub Actions job outputs are never masked, regardless of how they're consumed downstream, and are readable via the Actions REST API for as long as the workflow run's logs are retained. In a public repository this means the minted key is visible to anyone for its TTL window, not just to the workflow. This repository's own `ai-review.yml` accepts that tradeoff for its short-lived, narrowly-scoped telemetry key; weigh it against your own threat model before copying the pattern, especially in a public repo. If that exposure is unacceptable, store a long-lived key as a regular repository secret instead (previous example) — the tradeoff there is a static credential rather than a public but short-lived one.
 
 Missing credentials, an invalid site, and Datadog API errors produce GitHub warnings and remain fail-open: they do not change the review result.
 
@@ -216,7 +223,7 @@ gate ─► prepare ─► review_{provider} ─┬─► post
 | `gate` | `contents: read`, `pull-requests: read` | Validates the trigger, authorizes the actor (on_demand), resolves PR SHAs. |
 | `review_*` | `contents: read`, `pull-requests: read` | Runs the AI with read-only tools. No write permissions. |
 | `post` | `contents: read`, `pull-requests: write` | Downloads the artifact, re-scans, posts the review. Never runs AI. |
-| `telemetry` | `contents: read`, `id-token: write` | Submits one batch of metrics using either the optional API-key secret or a dd-sts-minted key. Never accesses PR/review content. The `id-token: write` permission is only exercised when `datadog_sts_policy` is set. |
+| `telemetry` | `contents: read` | Submits one batch of metrics using the optional `datadog_api_key` secret. Never accesses PR/review content. The reusable workflow has no OIDC surface; callers that mint a key via dd-sts do so in their own workflow before invoking this one. |
 
 ### Trust boundaries
 
