@@ -350,10 +350,22 @@ test('manual requests from commenters without write access are rejected', async 
   assert.equal(outputs.get('proceed'), 'false');
 });
 
-test('reusable workflow accepts only an API key and contains no Datadog STS or OIDC path', () => {
+test('dd-sts is optional and its OIDC permission is confined to the telemetry job', () => {
   const yaml = readWorkflow();
-  assert.doesNotMatch(yaml, /datadog_auth_mode|datadog_sts_policy|dd-sts-action|id-token:\s*write/);
+  assert.match(yaml, /datadog_sts_policy:\n(?:.|\n)*?default:\s*''/);
   assert.match(yaml, /datadog_api_key:\n\s+required:\s*false/);
+  const telemetryBlock = extractJobBlock(yaml, 'telemetry', 'finish_signal');
+  assert.match(telemetryBlock, /id-token:\s*write/);
+  assert.match(telemetryBlock, /dd-sts-action/);
+  const names = [
+    ['gate', 'start_signal'], ['start_signal', 'prepare'], ['prepare', 'review_claude'],
+    ['review_claude', 'review_codex'], ['review_codex', 'review_gemini'],
+    ['review_gemini', 'post'], ['post', 'telemetry'], ['finish_signal', null],
+  ];
+  for (const [name, next] of names) {
+    const block = extractJobBlock(yaml, name, next);
+    assert.doesNotMatch(block, /id-token:\s*write|dd-sts-action/, `${name} must not request an OIDC token`);
+  }
 });
 
 test('Datadog credentials are never referenced by provider, prepare, post, or signal jobs', () => {
