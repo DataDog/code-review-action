@@ -21,7 +21,9 @@ const TOKEN_PATTERNS = [
 const CANARY_PATTERNS = [
   // curl/wget/nc/eval rarely appear as bare English words, so any same-line
   // argument (not a code-fence "```curl\n" style newline) is enough signal.
-  { label: 'shell-invocation', pattern: /(?:curl|wget|nc|eval)[ \t]+[^\s]/i },
+  // Word boundaries keep this from matching substrings like "async " or
+  // "evaluation " (nc/eval embedded in common English/code words).
+  { label: 'shell-invocation', pattern: /\b(?:curl|wget|nc|eval)\b[ \t]+[^\s]/i },
   // bash/sh are common English/code words ("bash scripting", "the sh
   // compatibility issue"), so require an actual invocation shape: a flag
   // (-c, -x, ...) or a quoted/path argument, not just any following word.

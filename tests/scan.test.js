@@ -140,6 +140,17 @@ test('hasCanary - bash/sh still caught with an actual invocation shape', () => {
   assert.ok(hasCanary('bash /tmp/payload.sh'));
 });
 
+test('hasCanary - word boundaries prevent matching substrings of curl/wget/nc/eval', () => {
+  // Regression: an earlier version of the shell-invocation pattern lacked
+  // \b around the command group, so "nc" and "eval" as substrings of common
+  // English/code words (async, sync, evaluation, retrieval) followed by a
+  // space + word falsely matched.
+  assert.ok(!hasCanary('async function'));
+  assert.ok(!hasCanary('sync code'));
+  assert.ok(!hasCanary('evaluation of'));
+  assert.ok(!hasCanary('retrieval of'));
+});
+
 // ---------------------------------------------------------------------------
 // findToken / findCanary (labeled match reporting)
 // ---------------------------------------------------------------------------
