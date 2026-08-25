@@ -929,10 +929,16 @@ jobs:
           try { review = JSON.parse(fs.readFileSync('codex-output.json', 'utf8')); }
           catch (e) { write(makeFallback(`could not parse Codex output: ${e.message}`, runUrl)); return; }
 
-          const codexMatch = findToken(review) || findCanary(review);
-          if (codexMatch) {
-            core.warning(`Secret or injection pattern detected in Codex output (${codexMatch}) - suppressing`);
-            write(makeFallback(`anomalous content in AI output (category: ${codexMatch}) - review suppressed for security`, runUrl));
+          const codexTokenMatch = findToken(review);
+          if (codexTokenMatch) {
+            core.warning(`Secret pattern detected in Codex output (${codexTokenMatch}) - suppressing`);
+            write(makeFallback(`secret pattern detected in AI output (category: ${codexTokenMatch}) - review suppressed for security`, runUrl));
+            return;
+          }
+          const codexCanaryMatch = findCanary(review);
+          if (codexCanaryMatch) {
+            core.warning(`Prompt-injection canary triggered in Codex output (${codexCanaryMatch}) - suppressing`);
+            write(makeFallback(`anomalous output detected (category: ${codexCanaryMatch}) - review suppressed for security`, runUrl));
             return;
           }
 
