@@ -253,3 +253,4 @@ AI output is checked for shell commands (`curl`, `wget`, `bash`, etc.) and attem
 - Fork PRs are not reviewed in `always` mode (provider API keys would be exposed to untrusted code). Use `on_demand` if you want to review fork PRs selectively.
 - The `gemini` provider uses `--yolo` (auto-approve all tool calls) as required by the upstream action. Tool restriction is enforced via the `settings` input using `tools.core` with snake_case built-in names (`read_file`, `glob`, `grep_search`, `list_directory`).
 - All three providers use the same output format (`github-review.json` shape). The `review_event` policy controls whether `REQUEST_CHANGES` and `APPROVE` are passed through or downgraded to `COMMENT`.
+- Dummy PR: trivial change to exercise the end-to-end pipeline after the dd-sts trust policy update.
