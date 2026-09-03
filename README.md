@@ -119,19 +119,22 @@ The `telemetry` job runs once, after every provider job settles, and submits a s
 - `code_review_action.output_tokens`
 - `code_review_action.cost_usd`
 - `code_review_action.duration_ms`
+- `code_review_action.provider_api_errors`
+- `code_review_action.provider_tool_calls`
+- `code_review_action.provider_latency_ms`
 - `code_review_action.telemetry_missing`
 
 All submissions are count metrics so values can be summed across dashboard windows. Tags are limited to `provider`, `trigger` (`manual` or `automatic`), validated resolved `model` (or `unavailable`), `status`, `cost_source`, and `repository`. Actor, PR number, SHA, workflow/run ID, filenames, prompts, descriptions, diffs, and model responses are never sent as metrics or tags.
 
 ### Usage and cost accuracy
 
-Normalized usage schema version 1 accepts null for genuinely unavailable fields. `cost_source` means:
+Normalized usage schema version 2 accepts null for genuinely unavailable fields. `cost_source` means:
 
 - `provider_reported`: the provider supplied the cost directly. Claude currently provides this value and it is preferred.
 - `estimated`: a tested local pricing table calculated the value. This workflow does not currently estimate any provider's cost.
 - `unavailable`: cost is null, never zero. Gemini exposes structured request/token statistics but not cost. The pinned Codex action exports only its final message, not the CLI's structured usage stream, so Codex request/token/model/cost fields remain unavailable pending an upstream machine-readable output.
 
-`code_review_action.telemetry_missing` is emitted whenever model, request, token, duration, or cost metadata is unavailable or rejected. Gemini output tokens include its candidate and thought-token billing dimensions; cached and uncached input are reported separately.
+`code_review_action.telemetry_missing` is emitted whenever model, request, token, duration, or cost metadata is unavailable or rejected. Gemini additionally reports aggregate provider API errors, API latency, and tool calls when its CLI stats include them. Gemini output tokens include its candidate and thought-token billing dimensions; cached and uncached input are reported separately.
 
 ### Cancellation limitation
 

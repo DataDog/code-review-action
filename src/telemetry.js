@@ -2,7 +2,7 @@
 
 const https = require('node:https');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const PROVIDERS = new Set(['claude', 'codex', 'gemini']);
 const STATUSES = new Set(['success', 'failure', 'cancelled']);
 const COST_SOURCES = new Set(['provider_reported', 'estimated', 'unavailable']);
@@ -20,7 +20,8 @@ const DATADOG_SITES = new Set([
 const USAGE_FIELDS = new Set([
   'schema_version', 'provider', 'model', 'api_requests', 'input_tokens',
   'cached_input_tokens', 'output_tokens', 'duration_ms', 'cost_usd',
-  'cost_source', 'pricing_version', 'status',
+  'cost_source', 'pricing_version', 'api_errors', 'tool_calls',
+  'provider_latency_ms', 'status',
 ]);
 
 const LIMITS = Object.freeze({
@@ -29,6 +30,9 @@ const LIMITS = Object.freeze({
   cached_input_tokens: 1_000_000_000_000,
   output_tokens: 1_000_000_000_000,
   duration_ms: 7 * 24 * 60 * 60 * 1000,
+  provider_latency_ms: 1_000_000_000_000,
+  api_errors: 1_000_000,
+  tool_calls: 1_000_000,
   cost_usd: 1_000_000,
 });
 
@@ -56,6 +60,9 @@ function emptyUsage(provider, durationMs, status) {
     cost_usd: null,
     cost_source: 'unavailable',
     pricing_version: null,
+    api_errors: null,
+    tool_calls: null,
+    provider_latency_ms: null,
     status: STATUSES.has(status) ? status : 'failure',
   };
 }
@@ -120,6 +127,10 @@ function normalizeGemini(document, { durationMs, status = 'success' } = {}) {
   let input = 0;
   let cached = 0;
   let output = 0;
+  let errors = 0;
+  let latency = 0;
+  let errorsValid = true;
+  let latencyValid = true;
   let valid = entries.length > 0;
   for (const [, metrics] of entries) {
     const req = safeNumber(metrics?.api?.totalRequests, { integer: true, max: LIMITS.api_requests });
@@ -133,6 +144,13 @@ function normalizeGemini(document, { durationMs, status = 'success' } = {}) {
     cached += cacheRead;
     // Gemini's candidates exclude thought tokens; both are output billing dimensions.
     output += candidates + thoughts;
+
+    const apiErrors = safeNumber(metrics?.api?.totalErrors, { integer: true, max: LIMITS.api_errors });
+    if (apiErrors === null) errorsValid = false;
+    else errors += apiErrors;
+    const apiLatency = safeNumber(metrics?.api?.totalLatencyMs, { integer: true, max: LIMITS.provider_latency_ms });
+    if (apiLatency === null) latencyValid = false;
+    else latency += apiLatency;
   }
   if (valid && requests <= LIMITS.api_requests && input <= LIMITS.input_tokens &&
       cached <= LIMITS.cached_input_tokens && output <= LIMITS.output_tokens) {
@@ -141,6 +159,10 @@ function normalizeGemini(document, { durationMs, status = 'success' } = {}) {
     out.cached_input_tokens = cached;
     out.output_tokens = output;
   }
+  if (entries.length && errorsValid && errors <= LIMITS.api_errors) out.api_errors = errors;
+  if (entries.length && latencyValid && latency <= LIMITS.provider_latency_ms) out.provider_latency_ms = latency;
+  const toolCalls = safeNumber(document?.stats?.tools?.totalCalls, { integer: true, max: LIMITS.tool_calls });
+  if (toolCalls !== null) out.tool_calls = toolCalls;
   return out;
 }
 
@@ -230,6 +252,9 @@ function buildFinishSeries(usage, { trigger, repository, status, timestamp = Mat
     output_tokens: 'code_review_action.output_tokens',
     cost_usd: 'code_review_action.cost_usd',
     duration_ms: 'code_review_action.duration_ms',
+    api_errors: 'code_review_action.provider_api_errors',
+    tool_calls: 'code_review_action.provider_tool_calls',
+    provider_latency_ms: 'code_review_action.provider_latency_ms',
   };
   for (const [field, metric] of Object.entries(metrics)) {
     if (value[field] !== null) series.push(point(metric, value[field], tags, timestamp));

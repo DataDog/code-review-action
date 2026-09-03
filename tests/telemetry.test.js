@@ -10,7 +10,7 @@ const fixture = (name) => JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtu
 
 test('Claude usage normalization uses SDK metadata and provider-reported cost', () => {
   assert.deepEqual(telemetry.normalizeClaude(fixture('claude.json'), { durationMs: 1, status: 'success' }), {
-    schema_version: 1,
+    schema_version: 2,
     provider: 'claude',
     model: 'claude-sonnet-4-5',
     api_requests: 4,
@@ -21,11 +21,14 @@ test('Claude usage normalization uses SDK metadata and provider-reported cost', 
     cost_usd: 0.42,
     cost_source: 'provider_reported',
     pricing_version: null,
+    api_errors: null,
+    tool_calls: null,
+    provider_latency_ms: null,
     status: 'success',
   });
 });
 
-test('Gemini usage normalization uses JSON stats and leaves cost unavailable', () => {
+test('Gemini usage normalization includes aggregate provider statistics and leaves cost unavailable', () => {
   const value = telemetry.normalizeGemini(fixture('gemini.json'), { durationMs: 43000, status: 'success' });
   assert.equal(value.model, 'gemini-2.5-pro');
   assert.equal(value.api_requests, 3);
@@ -33,6 +36,9 @@ test('Gemini usage normalization uses JSON stats and leaves cost unavailable', (
   assert.equal(value.cached_input_tokens, 800);
   assert.equal(value.output_tokens, 350);
   assert.equal(value.duration_ms, 43000);
+  assert.equal(value.api_errors, 0);
+  assert.equal(value.tool_calls, 0);
+  assert.equal(value.provider_latency_ms, 41000);
   assert.equal(value.cost_usd, null);
   assert.equal(value.cost_source, 'unavailable');
 });
@@ -67,6 +73,9 @@ test('usage validator rejects provider mismatch, extra fields, malicious tags, a
     [{ ...base, input_tokens: -1 }, 'claude'],
     [{ ...base, output_tokens: Infinity }, 'claude'],
     [{ ...base, duration_ms: telemetry.LIMITS.duration_ms + 1 }, 'claude'],
+    [{ ...base, api_errors: telemetry.LIMITS.api_errors + 1 }, 'claude'],
+    [{ ...base, tool_calls: -1 }, 'claude'],
+    [{ ...base, provider_latency_ms: Infinity }, 'claude'],
     [{ ...base, cost_source: 'unavailable', cost_usd: 0 }, 'claude'],
   ];
   for (const [value, provider] of cases) {
@@ -95,6 +104,17 @@ test('finish series counts one review run alongside usage metrics', () => {
       'status:success', 'cost_source:provider_reported', 'repository:DataDog/cra',
     ],
   });
+});
+
+test('finish series submits Gemini provider statistics when available', () => {
+  const usage = telemetry.normalizeGemini(fixture('gemini.json'), { durationMs: 43000, status: 'success' });
+  const series = telemetry.buildFinishSeries(usage, {
+    trigger: 'automatic', repository: 'DataDog/cra', status: 'success', timestamp: 123,
+  });
+  const metric = (name) => series.find((point) => point.metric === name)?.points[0].value;
+  assert.equal(metric('code_review_action.provider_api_errors'), 0);
+  assert.equal(metric('code_review_action.provider_tool_calls'), 0);
+  assert.equal(metric('code_review_action.provider_latency_ms'), 41000);
 });
 
 test('Datadog API errors reject without exposing the key', async () => {
