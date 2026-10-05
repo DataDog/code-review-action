@@ -25,5 +25,59 @@
       "text",
       "lcov"
     ]
+  },
+  "overrides": {
+    "mocha": {
+      "glob": {
+        "minimatch": {
+          "brace-expansion": "^5.0.12"
+        }
+      },
+      "minimatch": {
+        "brace-expansion": "^5.0.12"
+      }
+    },
+    "nyc": {
+      "glob": {
+        "minimatch": {
+          "brace-expansion": "^5.0.12"
+        }
+      },
+      "istanbul-lib-processinfo": {
+        "rimraf": {
+          "glob": {
+            "minimatch": {
+              "brace-expansion": "^5.0.12"
+            }
+          }
+        }
+      },
+      "rimraf": {
+        "glob": {
+          "minimatch": {
+            "brace-expansion": "^5.0.12"
+          }
+        }
+      },
+      "spawn-wrap": {
+        "rimraf": {
+          "glob": {
+            "minimatch": {
+              "brace-expansion": "^5.0.12"
+            }
+          }
+        }
+      },
+      "test-exclude": {
+        "glob": {
+          "minimatch": {
+            "brace-expansion": "^5.0.12"
+          }
+        },
+        "minimatch": {
+          "brace-expansion": "^5.0.12"
+        }
+      }
+    }
   }
 }
