@@ -603,7 +603,7 @@ jobs:
           fs.writeFileSync('_prepare/guidelines.md', result.guidelinesBody + '\n' + outputFormat);
 
     - name: Upload prepare artifacts
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ai-review-prepare
         path: _prepare/
@@ -840,7 +840,7 @@ jobs:
 
     - name: Upload review artifact
       if: always()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ai-review
         path: _review/review.json
@@ -850,7 +850,7 @@ jobs:
     - name: Upload normalized usage artifact
       if: always() && inputs.telemetry_enabled
       continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ai-review-usage
         path: _usage/usage.json
@@ -1048,7 +1048,7 @@ jobs:
 
     - name: Upload review artifact
       if: always()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ai-review
         path: _review/review.json
@@ -1058,7 +1058,7 @@ jobs:
     - name: Upload normalized usage artifact
       if: always() && inputs.telemetry_enabled
       continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ai-review-usage
         path: _usage/usage.json
@@ -1261,7 +1261,7 @@ jobs:
 
     - name: Upload review artifact
       if: always()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ai-review
         path: _review/review.json
@@ -1271,7 +1271,7 @@ jobs:
     - name: Upload normalized usage artifact
       if: always() && inputs.telemetry_enabled
       continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ai-review-usage
         path: _usage/usage.json
