@@ -301,3 +301,23 @@ test('extractJson - handles JSON with brace pairs inside string values', () => {
   const json = '{"body":"use {} syntax","event":"COMMENT","comments":[]}';
   assert.equal(extractJson(json), json);
 });
+
+test('extractJson - handles JSON with unmatched braces inside string values', () => {
+  for (const body of ['The block opened by `impl Foo {` is never closed.', 'Drop the extra `}`.']) {
+    const json = JSON.stringify({
+      body: 'Summary.',
+      event: 'COMMENT',
+      comments: [
+        { path: 'src/a.rs', line: 10, side: 'RIGHT', body },
+        { path: 'src/b.rs', line: 20, side: 'RIGHT', body: 'Second comment.' },
+      ],
+    }, null, 2);
+    assert.equal(extractJson(json), json);
+    assert.equal(extractJson('Here is the review: {not json}\n```json\n' + json + '\n```'), json);
+  }
+});
+
+test('extractJson - falls back to the depth-matching brace when nothing parses', () => {
+  const broken = '{"body":"ok","event":"COMMENT","comments":[{"path":"a"},]}';
+  assert.equal(extractJson('Some {prose}. ' + broken), broken);
+});
