@@ -96,11 +96,23 @@ function validateReview(review) {
   }
   return { errors };
 }
-// Scan backward from the last } to find its depth-matching { so that stray
-// brace pairs in prose before the JSON block (e.g. `Foo{}`) are skipped.
+// Return the JSON object that ends at the last }. Stray brace pairs in prose
+// before the JSON block (e.g. `Foo{}`) must be skipped, but counting braces
+// alone breaks on string values with unmatched braces (e.g. `impl Foo {`), so
+// take the earliest { whose slice parses. If none does, fall back to the
+// depth-matching { and let the caller report the parse error.
 function extractJson(text) {
   const lastBrace = text.lastIndexOf('}');
   if (lastBrace === -1) return null;
+  for (let i = text.indexOf('{'); i !== -1 && i < lastBrace; i = text.indexOf('{', i + 1)) {
+    const candidate = text.slice(i, lastBrace + 1);
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // not the start of the JSON block
+    }
+  }
   let depth = 0;
   for (let i = lastBrace; i >= 0; i--) {
     if (text[i] === '}') depth++;
