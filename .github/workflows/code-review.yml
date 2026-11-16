@@ -867,7 +867,9 @@ jobs:
     if: >-
       always() && needs.gate.outputs.proceed == 'true' && needs.prepare.result == 'success' &&
       needs.gate.outputs.provider == 'codex'
-    runs-on: ubuntu-latest
+    # Pinned to 24.04: codex-action's drop-sudo safety strategy fails on
+    # Ubuntu 26.04 (openai/codex-action#188). Revert to ubuntu-latest once fixed.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
