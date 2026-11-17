@@ -56,3 +56,61 @@ jobs:
         actionlint \
           -ignore 'property "workflow_(repository|sha)" is not defined' \
           .github/workflows/code-review.yml .github/workflows/ci.yml
+
+  # codex_runner + codex_drop_sudo run openai/codex-action's drop-sudo step on
+  # the same runner and action revision as review_codex, both read from
+  # code-review.yml. A runner bump to an image where drop-sudo is broken (e.g.
+  # Ubuntu 26.04 with codex-action v1.13) fails here with the upstream error:
+  # "Could not restrict access to /run/dbus/system_bus_socket"
+  # (openai/codex-action#188).
+  codex_runner:
+    name: Resolve Codex review runner
+    runs-on: ubuntu-latest
+    outputs:
+      runner:     ${{ steps.resolve.outputs.runner }}
+      action_sha: ${{ steps.resolve.outputs.action_sha }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Read review_codex runner and codex-action revision
+      id: resolve
+      run: |
+        job=$(awk '/^  review_codex:$/ { found = 1; next } found && /^  [a-z_]+:$/ { exit } found' \
+          .github/workflows/code-review.yml)
+        runner=$(sed -n 's/^    runs-on: *\([^ #]*\).*$/\1/p' <<< "$job")
+        action_sha=$(sed -n 's/^ *uses: *openai\/codex-action@\([0-9a-f]\{40\}\).*$/\1/p' <<< "$job")
+        if ! [[ "$runner" =~ ^[A-Za-z0-9._-]+$ && "$action_sha" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "::error::Could not read runs-on and the pinned openai/codex-action revision of review_codex in code-review.yml"
+          exit 1
+        fi
+        echo "review_codex runs on $runner with openai/codex-action@$action_sha"
+        echo "runner=$runner" >> "$GITHUB_OUTPUT"
+        echo "action_sha=$action_sha" >> "$GITHUB_OUTPUT"
+
+  codex_drop_sudo:
+    name: Codex drop-sudo on review runner
+    needs: codex_runner
+    runs-on: ${{ needs.codex_runner.outputs.runner }}
+    steps:
+    - name: Checkout openai/codex-action
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: openai/codex-action
+        ref: ${{ needs.codex_runner.outputs.action_sha }}
+        persist-credentials: false
+    - name: Set up Node.js
+      # Same setup-node revision and Node version codex-action uses.
+      uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+      with:
+        node-version: '24'
+    - name: Drop sudo privilege
+      # Same command codex-action runs for safety-strategy: drop-sudo on Linux.
+      run: node dist/main.js drop-sudo --user runner --group sudo
+    - name: Verify sudo privilege removed
+      run: |
+        if sudo -n true 2>/dev/null; then
+          echo "::error::Expected sudo to be disabled, but sudo succeeded."
+          exit 1
+        fi
+        echo "Confirmed sudo privilege is disabled."

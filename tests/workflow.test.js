@@ -264,22 +264,6 @@ function extractJobBlock(yaml, name, nextName) {
   return yaml.slice(start, end);
 }
 
-// openai/codex-action's drop-sudo safety strategy fails on Ubuntu 26.04+
-// (openai/codex-action#188). ubuntu-latest now resolves to 26.04 and Renovate
-// proposes ubuntu-24.04 -> ubuntu-26.04 bumps, so guard the pin until the
-// upstream fix ships.
-test('review_codex is pinned to an Ubuntu runner older than 26.04 while it uses drop-sudo', () => {
-  const block = extractJobBlock(readWorkflow(), 'review_codex', 'review_gemini');
-  assert.match(block, /safety-strategy:\s*drop-sudo/,
-    'review_codex no longer uses drop-sudo; revisit the Ubuntu pin and this test');
-  const runsOn = block.match(/^ {4}runs-on:\s*(.+?)\s*$/m);
-  assert.ok(runsOn, 'review_codex must declare runs-on');
-  const version = runsOn[1].match(/^ubuntu-(\d+)\.04$/);
-  assert.ok(version, `review_codex must pin an explicit ubuntu-XX.04 runner, got '${runsOn[1]}' (openai/codex-action#188)`);
-  assert.ok(Number(version[1]) < 26,
-    `review_codex must run on Ubuntu older than 26.04, got '${runsOn[1]}' (openai/codex-action#188)`);
-});
-
 test('telemetry is disabled by default and Datadog secret is optional', () => {
   const yaml = readWorkflow();
   const enabled = extractInputBlock(yaml, 'telemetry_enabled', 'datadog_site');
