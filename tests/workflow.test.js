@@ -350,13 +350,17 @@ test('manual requests from commenters without write access are rejected', async 
   assert.equal(outputs.get('proceed'), 'false');
 });
 
-test('dd-sts is optional and its OIDC permission is confined to the telemetry job', () => {
+test('Datadog WIF is optional and its OIDC permission is confined to the telemetry job', () => {
   const yaml = readWorkflow();
-  assert.match(yaml, /datadog_sts_policy:\n(?:.|\n)*?default:\s*''/);
+  assert.match(yaml, /datadog_org_uuid:\n(?:.|\n)*?default:\s*''/);
   assert.match(yaml, /datadog_api_key:\n\s+required:\s*false/);
   const telemetryBlock = extractJobBlock(yaml, 'telemetry', 'finish_signal');
   assert.match(telemetryBlock, /id-token:\s*write/);
-  assert.match(telemetryBlock, /dd-sts-action/);
+  assert.match(telemetryBlock, /datadog-workload-identity-federation-github-action\/intake@/);
+  assert.match(telemetryBlock, /if: inputs\.datadog_org_uuid != ''/);
+  assert.match(telemetryBlock, /org_uuid: \$\{\{ inputs\.datadog_org_uuid \}\}/);
+  assert.match(telemetryBlock, /site: \$\{\{ inputs\.datadog_site \}\}/);
+  assert.match(telemetryBlock, /DD_API_KEY: \$\{\{ steps\.datadog-wif\.outputs\.api_key \|\| secrets\.datadog_api_key \}\}/);
   const names = [
     ['gate', 'start_signal'], ['start_signal', 'prepare'], ['prepare', 'review_claude'],
     ['review_claude', 'review_codex'], ['review_codex', 'review_gemini'],
@@ -364,7 +368,7 @@ test('dd-sts is optional and its OIDC permission is confined to the telemetry jo
   ];
   for (const [name, next] of names) {
     const block = extractJobBlock(yaml, name, next);
-    assert.doesNotMatch(block, /id-token:\s*write|dd-sts-action/, `${name} must not request an OIDC token`);
+    assert.doesNotMatch(block, /id-token:\s*write|datadog-workload-identity-federation-github-action/, `${name} must not request an OIDC token`);
   }
 });
 
@@ -377,7 +381,7 @@ test('Datadog credentials are never referenced by provider, prepare, post, or si
   ];
   for (const [name, next] of names) {
     const block = extractJobBlock(yaml, name, next);
-    assert.doesNotMatch(block, /datadog_api_key|DD_API_KEY|dd_sts\.outputs\.api_key/,
+    assert.doesNotMatch(block, /datadog_api_key|DD_API_KEY|datadog-wif\.outputs\.api_key/,
       `${name} must not reference a Datadog credential`);
   }
 });

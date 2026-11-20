@@ -10,15 +10,16 @@ jobs:
             contents: read
             pull-requests: write
             checks: write
-            id-token: write   # required for dd-sts
-        uses: DataDog/code-review-action/.github/workflows/code-review.yml@main
+            id-token: write   # required for Datadog WIF
+        uses: ./.github/workflows/code-review.yml
         with:
             provider: claude
             trigger_mode: on_demand
             review_event: COMMENT_ONLY
             prompt_file_pattern: '**/codereview_guideline.md'
             telemetry_enabled: true
-            datadog_sts_policy: code-review-action-telemetry
+            datadog_org_uuid: 8dee7c38-00cb-11ea-a77b-8b5a08d3b091 # Datadog HQ (org 2)
+            datadog_site: datadoghq.com
         secrets:
             openai_api_key: ${{ secrets.OPENAI_API_KEY }}
             anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

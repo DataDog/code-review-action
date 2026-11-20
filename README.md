@@ -64,7 +64,7 @@ Add the API key for your chosen provider as a repository secret:
 | `prompt_file_pattern` | string | `""` | Glob pattern (evaluated against the default branch) used to auto-discover review guide files instead of listing them, e.g. `**/codereview_guideline.md`. Every matched file follows the same scoping rule as `prompt_file`. Mutually exclusive with `prompt_file`. |
 | `telemetry_enabled` | boolean | `false` | Submit review-run and provider usage metrics to Datadog from an isolated job. |
 | `datadog_site` | string | `datadoghq.com` | Datadog site parameter. Standard US, EU, AP, UK, and government sites are accepted; URLs and arbitrary hosts are rejected. |
-| `datadog_sts_policy` | string | `""` | Name of a dd-sts policy file authorizing this caller to mint a short-lived Datadog API key at runtime instead of a stored secret. Falls back to the `datadog_api_key` secret when empty. Internal DataDog callers only. |
+| `datadog_org_uuid` | string | `""` | Datadog organization UUID for GitHub Workload Identity Federation (WIF). Requires an intake mapping authorizing the caller and `id-token: write`. Uses `datadog_site` for the exchange and metric submission. Falls back to the `datadog_api_key` secret when empty or when the exchange fails. |
 
 ## Optional Datadog telemetry
 
@@ -87,24 +87,26 @@ jobs:
       datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
 ```
 
-**Internal DataDog callers: minting a short-lived key with dd-sts.** Because this workflow runs directly on `pull_request`/`issue_comment` events (not `pull_request_target`), a GitHub environment cannot be used to gate a stored secret behind an approval step. Internal callers that would rather not store a long-lived API key can set `datadog_sts_policy` instead: the `telemetry` job itself exchanges that [dd-sts](https://datadoghq.atlassian.net/wiki/spaces/SECENG/pages/5769659435/User+guide+dd-sts) policy for a short-lived key at runtime via `DataDog/dd-sts-action`, falling back to `datadog_api_key` when the input is empty. The caller only needs to grant `id-token: write` on the job that calls `code-review.yml` — no separate job is required:
+**GitHub Workload Identity Federation (WIF).** To obtain a Datadog API key at runtime, configure a GitHub WIF intake mapping in the target Datadog organization that authorizes the calling workflow, then set `datadog_org_uuid` and `datadog_site`. The isolated `telemetry` job exchanges its GitHub OIDC token for a managed API key via `DataDog/datadog-workload-identity-federation-github-action/intake`. See the [Datadog WIF user guide](https://datadoghq.atlassian.net/wiki/spaces/SECENG/pages/7366706580/User+guide+GitHub+Workload+Identity+Federation) for mapping setup. The caller must grant `id-token: write` on the job that calls `code-review.yml`:
+
+Callers upgrading from dd-sts must replace `datadog_sts_policy` with `datadog_org_uuid` and ensure an intake mapping exists in that organization. Policy names are no longer passed to the workflow.
 
 ```yaml
 jobs:
   review:
     permissions:
-      id-token: write   # required for dd-sts
+      id-token: write   # required for Datadog WIF
     uses: DataDog/code-review-action/.github/workflows/code-review.yml@<sha>
     with:
       provider: codex
       telemetry_enabled: true
       datadog_site: datadoghq.com
-      datadog_sts_policy: my-repo-telemetry
+      datadog_org_uuid: <your-org-uuid>
     secrets:
       openai_api_key: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-The credential is minted and consumed within the same `telemetry` job step sequence, never crossing a job boundary via `needs.<job>.outputs`. This matters because `DataDog/dd-sts-action` calls `::add-mask::` on the key before writing it to `GITHUB_OUTPUT`; GitHub silently drops (not just redacts) a job-level `outputs:` value that matches an already-masked string, so a design that mints the key in one job and reads it via `needs.<job>.outputs` in another loses the value entirely. Keeping both steps in `telemetry` avoids that failure mode — the same pattern used by other internal dd-sts callers such as `datadog-agent`'s `report-merged-pr.yml`. Minting is fail-open (`continue-on-error: true`): if dd-sts is unavailable, `telemetry` falls back to `datadog_api_key` (or emits a warning if that is unset too) without affecting the review result.
+The credential is obtained and consumed within the same `telemetry` job, never crossing a job boundary via `needs.<job>.outputs`. The WIF action masks the key before writing it to `GITHUB_OUTPUT`; GitHub drops job-level outputs that match masked values. The exchange is fail-open (`continue-on-error: true`): if WIF is unavailable, `telemetry` falls back to `datadog_api_key` (or emits a warning if that is unset too) without affecting the review result.
 
 Missing credentials, an invalid site, and Datadog API errors produce GitHub warnings and remain fail-open: they do not change the review result.
 
@@ -209,7 +211,7 @@ gate ─► prepare ─► review_{provider} ─┬─► post
 | `gate` | `contents: read`, `pull-requests: read` | Validates the trigger, authorizes the actor (on_demand), resolves PR SHAs. |
 | `review_*` | `contents: read`, `pull-requests: read` | Runs the AI with read-only tools. No write permissions. |
 | `post` | `contents: read`, `pull-requests: write` | Downloads the artifact, re-scans, posts the review. Never runs AI. |
-| `telemetry` | `contents: read`, `id-token: write` | Submits one batch of metrics using either the `datadog_api_key` secret or a key minted via dd-sts when `datadog_sts_policy` is set. Never accesses PR/review content. `id-token: write` is only exercised when `datadog_sts_policy` is set. |
+| `telemetry` | `contents: read`, `id-token: write` | Submits one batch of metrics using either the `datadog_api_key` secret or a key obtained via WIF when `datadog_org_uuid` is set. Never accesses PR/review content. `id-token: write` is only exercised when `datadog_org_uuid` is set. |
 
 ### Trust boundaries
 

@@ -15,15 +15,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # required by dd-sts-action to exchange OIDC token
+      id-token: write   # required by Datadog WIF to exchange the OIDC token
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Get Datadog credentials
-      id: dd-sts
-      uses: DataDog/dd-sts-action@639d841c72f15e4e77747bd726ef8105ce971da2 # v1.0.5
+      id: datadog-wif
+      uses: DataDog/datadog-workload-identity-federation-github-action/intake@c9456387851248e0a5452f99085b16ad14fc3acb # v1.0.0
       with:
-        policy: code-review-action-ci
+        org_uuid: 8dee7c38-00cb-11ea-a77b-8b5a08d3b091 # Datadog HQ (org 2)
+        site: datadoghq.com
 
     - name: Install dependencies
       run: npm ci
@@ -32,7 +33,7 @@ jobs:
       env:
         NODE_OPTIONS: -r dd-trace/ci/init
         DD_CIVISIBILITY_AGENTLESS_ENABLED: 'true'
-        DD_API_KEY: ${{ steps.dd-sts.outputs.api_key }}
+        DD_API_KEY: ${{ steps.datadog-wif.outputs.api_key }}
         DD_SERVICE: code-review-action
         DD_ENV: ci
       run: npm test
@@ -55,4 +56,4 @@ jobs:
       run: |
         actionlint \
           -ignore 'property "workflow_(repository|sha)" is not defined' \
-          .github/workflows/code-review.yml .github/workflows/ci.yml
+          .github/workflows/code-review.yml .github/workflows/ci.yml .github/workflows/ai-review.yml
