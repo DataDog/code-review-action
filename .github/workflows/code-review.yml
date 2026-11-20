@@ -870,7 +870,7 @@ jobs:
     # Pinned to 24.04: codex-action's drop-sudo safety strategy fails on
     # Ubuntu 26.04 (openai/codex-action#188). Revert to ubuntu-latest once fixed;
     # the codex_drop_sudo job in ci.yml runs drop-sudo on this runner to check.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       pull-requests: read
