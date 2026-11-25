@@ -675,7 +675,7 @@ jobs:
 
     - name: Run Claude (read-only agent mode)
       id: claude
-      uses: anthropics/claude-code-action@cc98b3ae241b0fcfb6a42a2690751afffecb4452 # v1.0.278
+      uses: anthropics/claude-code-action@469588f42e6b1e94cd14ad09dccfeaec772ce0fd # v1.0.280
       with:
         anthropic_api_key: ${{ secrets.anthropic_api_key }}
         github_token:      ${{ secrets.GITHUB_TOKEN }}
