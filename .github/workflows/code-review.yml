@@ -162,10 +162,15 @@ on:
           runtime; the caller's job that invokes this workflow must grant
           `permissions: id-token: write`. Uses datadog_site for the exchange
           and metric submission. Falls back to the datadog_api_key secret
-          when empty or when the exchange fails. See README.md.
+          when no organization UUID is supplied or when the exchange fails.
+          The UUID may alternatively be supplied as the datadog_org_uuid
+          workflow secret. See README.md.
         type: string
         default: ''
     secrets:
+      datadog_org_uuid:
+        required: false
+        description: 'Datadog organization UUID for WIF (optional; used when the datadog_org_uuid input is empty)'
       anthropic_api_key:
         required: false
         description: 'Anthropic API key (required when provider=claude)'
@@ -1438,6 +1443,8 @@ jobs:
       contents: read
       # Only exercised when datadog_org_uuid is set; unused otherwise.
       id-token: write
+    env:
+      DATADOG_ORG_UUID: ${{ inputs.datadog_org_uuid || secrets.datadog_org_uuid }}
     steps:
     - name: Checkout telemetry code (self, pinned)
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1454,11 +1461,11 @@ jobs:
         path: _usage
     - name: Get Datadog credentials via WIF
       id: datadog-wif
-      if: inputs.datadog_org_uuid != ''
+      if: env.DATADOG_ORG_UUID != ''
       continue-on-error: true
       uses: DataDog/datadog-workload-identity-federation-github-action/intake@c9456387851248e0a5452f99085b16ad14fc3acb # v1.0.0
       with:
-        org_uuid: ${{ inputs.datadog_org_uuid }}
+        org_uuid: ${{ env.DATADOG_ORG_UUID }}
         site: ${{ inputs.datadog_site }}
     - name: Validate usage and submit finish metrics
       env:

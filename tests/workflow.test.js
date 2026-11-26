@@ -353,12 +353,14 @@ test('manual requests from commenters without write access are rejected', async 
 test('Datadog WIF is optional and its OIDC permission is confined to the telemetry job', () => {
   const yaml = readWorkflow();
   assert.match(yaml, /datadog_org_uuid:\n(?:.|\n)*?default:\s*''/);
+  assert.match(yaml, /datadog_org_uuid:\n\s+required:\s*false/);
   assert.match(yaml, /datadog_api_key:\n\s+required:\s*false/);
   const telemetryBlock = extractJobBlock(yaml, 'telemetry', 'finish_signal');
   assert.match(telemetryBlock, /id-token:\s*write/);
   assert.match(telemetryBlock, /datadog-workload-identity-federation-github-action\/intake@/);
-  assert.match(telemetryBlock, /if: inputs\.datadog_org_uuid != ''/);
-  assert.match(telemetryBlock, /org_uuid: \$\{\{ inputs\.datadog_org_uuid \}\}/);
+  assert.match(telemetryBlock, /DATADOG_ORG_UUID: \$\{\{ inputs\.datadog_org_uuid \|\| secrets\.datadog_org_uuid \}\}/);
+  assert.match(telemetryBlock, /if: env\.DATADOG_ORG_UUID != ''/);
+  assert.match(telemetryBlock, /org_uuid: \$\{\{ env\.DATADOG_ORG_UUID \}\}/);
   assert.match(telemetryBlock, /site: \$\{\{ inputs\.datadog_site \}\}/);
   assert.match(telemetryBlock, /DD_API_KEY: \$\{\{ steps\.datadog-wif\.outputs\.api_key \|\| secrets\.datadog_api_key \}\}/);
   const names = [
@@ -381,7 +383,7 @@ test('Datadog credentials are never referenced by provider, prepare, post, or si
   ];
   for (const [name, next] of names) {
     const block = extractJobBlock(yaml, name, next);
-    assert.doesNotMatch(block, /datadog_api_key|DD_API_KEY|datadog-wif\.outputs\.api_key/,
+    assert.doesNotMatch(block, /datadog_org_uuid|DATADOG_ORG_UUID|datadog_api_key|DD_API_KEY|datadog-wif\.outputs\.api_key/,
       `${name} must not reference a Datadog credential`);
   }
 });

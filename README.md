@@ -64,7 +64,7 @@ Add the API key for your chosen provider as a repository secret:
 | `prompt_file_pattern` | string | `""` | Glob pattern (evaluated against the default branch) used to auto-discover review guide files instead of listing them, e.g. `**/codereview_guideline.md`. Every matched file follows the same scoping rule as `prompt_file`. Mutually exclusive with `prompt_file`. |
 | `telemetry_enabled` | boolean | `false` | Submit review-run and provider usage metrics to Datadog from an isolated job. |
 | `datadog_site` | string | `datadoghq.com` | Datadog site parameter. Standard US, EU, AP, UK, and government sites are accepted; URLs and arbitrary hosts are rejected. |
-| `datadog_org_uuid` | string | `""` | Datadog organization UUID for GitHub Workload Identity Federation (WIF). Requires an intake mapping authorizing the caller and `id-token: write`. Uses `datadog_site` for the exchange and metric submission. Falls back to the `datadog_api_key` secret when empty or when the exchange fails. |
+| `datadog_org_uuid` | string | `""` | Datadog organization UUID for GitHub Workload Identity Federation (WIF). May alternatively be supplied as the `datadog_org_uuid` workflow secret. Requires an intake mapping authorizing the caller and `id-token: write`. Uses `datadog_site` for the exchange and metric submission. Falls back to the `datadog_api_key` secret when no UUID is supplied or when the exchange fails. |
 
 ## Optional Datadog telemetry
 
@@ -91,7 +91,7 @@ jobs:
 
 Callers upgrading from dd-sts must replace `datadog_sts_policy` with `datadog_org_uuid` and ensure an intake mapping exists in that organization. Policy names are no longer passed to the workflow.
 
-Create a repository Actions variable named `DATADOG_ORG_UUID` containing the target organization's UUID. The example below passes it to the reusable workflow; this repository's CI uses the same variable.
+Create a repository Actions secret named `DATADOG_ORG_UUID` containing the target organization's UUID. Pass it through the caller's `secrets:` block as shown below; GitHub does not allow secrets in a reusable-workflow caller's `with:` block. This repository's CI uses the same secret. The reusable workflow also accepts the UUID through its `datadog_org_uuid` input; that input takes precedence if both are supplied.
 
 ```yaml
 jobs:
@@ -103,8 +103,8 @@ jobs:
       provider: codex
       telemetry_enabled: true
       datadog_site: datadoghq.com
-      datadog_org_uuid: ${{ vars.DATADOG_ORG_UUID }}
     secrets:
+      datadog_org_uuid: ${{ secrets.DATADOG_ORG_UUID }}
       openai_api_key: ${{ secrets.OPENAI_API_KEY }}
 ```
 

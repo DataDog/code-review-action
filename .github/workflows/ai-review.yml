@@ -18,9 +18,9 @@ jobs:
             review_event: COMMENT_ONLY
             prompt_file_pattern: '**/codereview_guideline.md'
             telemetry_enabled: true
-            datadog_org_uuid: ${{ vars.DATADOG_ORG_UUID }}
             datadog_site: datadoghq.com
         secrets:
+            datadog_org_uuid: ${{ secrets.DATADOG_ORG_UUID }}
             openai_api_key: ${{ secrets.OPENAI_API_KEY }}
             anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
             gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
